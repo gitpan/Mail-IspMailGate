@@ -54,7 +54,7 @@ require Mail::IspMailGate;
 delete @ENV{'IFS', 'CDPATH', 'ENV', 'BASH_ENV'};
 $ENV{'PATH'} = '/bin:/usr/bin';
 
-my($debugging) = 1;
+my($debugging) = 0;
 my(@args) = @ARGV;
 
 

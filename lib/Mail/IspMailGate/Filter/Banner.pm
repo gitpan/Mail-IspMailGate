@@ -171,9 +171,9 @@ sub doFilter ($$) {
 	    if (defined($file)) {
 		my $fh;
 		my $banner;
+		local $/ = undef;
 		if (ref($file)) {
 		    $fh = $file;   # For testing and debugging
-		    local($/) = undef;
 		    $banner = $fh->getline();
 		} else {
 		    if (!-f $file) {
@@ -184,7 +184,6 @@ sub doFilter ($$) {
 		    if (!open($fh, "<$file")) {
 			return '';
 		    }
-		    local($/) = undef;
 		    $banner = <$fh>;
 		}
 		my $method = "Banner" . (uc $type);

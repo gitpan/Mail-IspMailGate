@@ -37,21 +37,14 @@
  **************************************************************************/
 
 
-#include <EXTERN.h>
-#include <perl.h>
-
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
 #include <syslog.h>
 #include <sys/socket.h>
-#ifdef I_UNISTD
 #include <unistd.h>
-#endif
-#ifdef I_SYS_UN
 #include <sys/un.h>
-#endif
 
 
 
@@ -267,10 +260,10 @@ int main(int argc, char** argv, char** env) {
 	char** envPtr;
 	int numVars = 0;
 
-	for (envPtr = environ;  *envPtr;  ++envPtr) {
+	for (envPtr = __environ;  *envPtr;  ++envPtr) {
 	    numVars++;
 	}
-	SendArray(sock, &buf, environ, numVars);
+	SendArray(sock, &buf, __environ, numVars);
     }
 
     /*
@@ -291,9 +284,12 @@ int main(int argc, char** argv, char** env) {
     }
 
     /*
-     *  Flush output
+     *  Flush output and do a shutdown on the socket, so that the daemon
+     *  knows we won't send anymore data.
      */
     Flush(sock, &buf);
+    shutdown(sock, 1);
+
 
     /*
      *  Now wait for input from ispMailGateD and pass it to stdout,

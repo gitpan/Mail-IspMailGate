@@ -11,7 +11,7 @@ use vars qw(@ISA $VERSION $passPhrases);
 @ISA = qw(MIME::Decoder);
 
 # The package version, both in 1.23 style *and* usable by MakeMaker:
-$VERSION = substr q$Revision: 0.01 $, 10;
+$VERSION = substr q$Revision: 1.1.1.1 $, 10;
 
 
 #------------------------------
@@ -107,6 +107,6 @@ it and/or modify it under the same terms as Perl itself.
 
 =head1 VERSION
 
-$Revision: 0.01 $ $Date: 1998/04/08 04:24:07 $
+$Revision: 1.1.1.1 $ $Date: 1999/02/22 11:08:56 $
 
 =cut

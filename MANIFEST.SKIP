@@ -1,0 +1,6 @@
+^Makefile(.old)?$
+~$
+^ispMailGateD?$
+^output/
+^blib/
+^pm_to_blib$

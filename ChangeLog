@@ -1,0 +1,18 @@
+1999-02-22  Jochen Wiedmann  <joe@ispsoft.de> (0.1003)
+
+	* ispMailGate.c (main): Added a shutdown on the socket. My thanks
+	  to Matt Crawford <crawdad@fnal.gov> for suggesting this.
+
+1998-10-21  Jochen Wiedmann  <joe@ispsoft.de> (0.1002)
+
+	* Added lib/Mail/IspMailGate/Test.pm.
+	* lib/Mail/IspMailGate/Filter/Banner.pm (doFilter): Fixed bug,
+	  $/ was not set to undef while reading contents.
+
+1998-10-21  Jochen Wiedmann  <joe@ispsoft.de> (0.1001)
+
+	* Fixed numerous bugs.
+	* Added lib/Mail/IspMailGate/Filter/Banner.pm and t/14banner.t.
+	* Added t/14antivir.t, t/24mail-antivir.t and eicar.com to check
+	  the AntiVir virus scanner.
+

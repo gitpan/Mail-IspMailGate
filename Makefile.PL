@@ -31,6 +31,7 @@ sub CheckModule ($;$$) {
 my $ok = 1;
 $ok &&= CheckModule("MIME::Tools", 4.116);
 $ok &&= CheckModule("IO::Tee", 0.61);
+$ok &&= CheckModule("Sys::Syslog");
 
 if (!$ok) {
     print <<"MESSAGE";
@@ -62,6 +63,7 @@ my %opts =
      'dist'         => { 'SUFFIX'       => ".gz",
 			 'DIST_DEFAULT' => 'all tardist',
 			 'COMPRESS'     => "gzip -9vf" },
+     'clean'        => { 'FILES'        => 'output ispMailGate ispMailGateD' },
      'DEFINE'       => "-DPATH_UNIXSOCK=\\\"$unixSock\\\"",
      'INC'          => '-I$(PERL_INC)',
      'linkext'      => {'LINKTYPE'     => ''}

@@ -11,7 +11,7 @@ require Mail::IspMailGate::Filter::Dummy;
 require Mail::IspMailGate::Filter::VirScan;
 
 
-$VERSION = '1.001';
+$VERSION = '1.003';
 $PREFIX = "/usr/local/IspMailGate-${VERSION}";
 $LIBDIR = "${PREFIX}/lib";
 $ETCDIR = "${PREFIX}/etc";

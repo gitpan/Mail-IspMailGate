@@ -13,7 +13,7 @@ require File::Path;
 
 package Mail::IspMailGate;
 
-$Mail::IspMailGate::VERSION = '0.1001';
+$Mail::IspMailGate::VERSION = '0.1003';
 
 
 package Mail::IspMailGate::SMTP;
