@@ -161,10 +161,10 @@ sub catchChilds {
     $SIG{CHLD} = \&catchChilds;
 }
 
-sub Main ($$$$) {
-    my($fh, $from, $recipients, $attr) = @_;
+sub Main ($$$$$) {
+    my($fh, $from, $recipients, $attr, $host) = @_;
     my($parser) = Mail::IspMailGate->new($attr);
-    $parser->Main($fh, $from, $recipients);
+    $parser->Main($fh, $from, $recipients, $host);
 }
 
 {
@@ -178,6 +178,7 @@ sub Main ($$$$) {
     my($tmpDir);
     my($from, $noMails, $noFork);
     my @args = @ARGV;
+    my $deliveryHost;
 
     while ($arg = shift @ARGV) {
 	if ($arg eq '-s'  ||  $arg eq '-server'  ||  $arg eq '--server') {
@@ -218,6 +219,11 @@ sub Main ($$$$) {
 	    }
 	} elsif ($arg eq '-d'  ||  $arg eq '-debug'  ||  $arg eq '--debug') {
 	    $debugging = 1;
+        } elsif ($arg eq '-h'  ||  $arg eq '-host'  ||  $arg eq '--host') {
+	    if (!defined($deliveryHost = shift @ARGV)) {
+		print "Option --host without argument.\n";
+		Usage();
+	    }
 	} else {
 	    push(@recipients, $arg);
 	}
@@ -269,7 +275,7 @@ sub Main ($$$$) {
 	if ($debugging) {
 	    Sys::Syslog::syslog('debug', "Command line arguments: " . join(" ", @args));
 	}
-	Main(\*STDIN, $from, \@recipients, $attr);
+	Main(\*STDIN, $from, \@recipients, $attr, $deliveryHost);
 	exit(0);
     }
 
@@ -1030,7 +1036,7 @@ It might help to look at a commented example of the configuration file:
     1;
 
 
-=head1 AUTHORS, COPYRIGHT AND LICENSE
+=head1 AUTHORS AND COPYRIGHT
 
 This module is
 
@@ -1053,59 +1059,9 @@ This module is
 
     All Rights Reserved.
 
-Permission to use, copy and modify this software and its documentation, 
-is hereby granted to non-commercial entities without fee, provided that
-this license information and copyright notice appear in all copies.
-
-A "non-commercial entity" is defined within the scope of this license as
-an educational institution (excluding a commercial training organisation), 
-non-commercial research organisation, registered charity, registered 
-not-for-profit organisation, or full-time student.
-
-Use of this software by any other person or organisation for any purpose
-requires that a usage license be obtained from the authors for that person
-or organisation.  
-
-Commercial redistribution of this software, by itself or as part of
-another application is allowed only under express written permission of
-the authors.
-
-AMAR SUBRAMANIAN AND JOCHEN WIEDMANN DISCLAIM ALL WARRANTIES WITH 
-REGARD TO THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
-AND FITNESS, IN NO EVENT SHALL AMAR SUBRAMANIAN OR JOCHEN WIEDMANN BE 
-LIABLE FOR ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES 
-WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN 
-ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR 
-IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-
-
-=head2 The Plain English Version
-
-You can use this software free of charge if you are an educational 
-institution (excluding commercial training organisations), non-commercial 
-research organisation, registered charity, registered not-for-profit 
-organisation, or full-time student.
-
-If you want to use it and you do not fit into any of the above listed
-categories, you must register your copy using the invoice form provided.
-
-You cannot sell IspMailGate or bundle it with a product you develop without
-obtaining written persmission and a "Commercial Redistribution License"
-from us.
-
-If something goes wrong and you lose data, system uptime, CPU cycles,
-profits or anything else, neither of us is responsible.
-
-
-=head2 The future of this license
-
-It might well happen that this program will be distributed under the
-GPL or the Perl Artistic License in a future version. Even (Even? No,
-cut that word. :-) as professional software developers we are using
-and recommending a lot of free software, including sendmail, Perl or
-the MIME::Entity modules which are the base of this product. We beg
-to understand, that we first would like to be payed for the time we
-have put into IspMailGate. We'll see what happens.
+You may distribute under the terms of either the GNU General
+Public License or the Artistic License, as specified in the
+Perl README file.
 
 
 =head1 SEE ALSO

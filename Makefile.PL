@@ -81,11 +81,9 @@ WriteMakefile(%opts);
 package MY;
 
 sub postamble {
-    "pm_to_blib: README LICENSE\n\n"
+    "pm_to_blib: README\n\n"
     . "README: ispMailGateD\n"
     . "\tperldoc -t ispMailGateD >README\n\n"
-    . "LICENSE: README\n"
-    . "\tcat README | perl -e 'while(\$\$line = <STDIN>) { if (\$\$line =~ /^AUTHORS/) { \$\$out=1 } elsif (\$\$line =~ /SEE ALSO/) { \$\$out = 0 } if (\$\$out) { print \$\$line } }' >LICENSE\n\n"
 #    . "ispMailGate: ispMailGate.o \$(INST_BIN)/.exists\n"
 #    . "\t\$(LD) \$(LDFLAGS) -o ispMailGate ispMailGate.o\n\n"
 #    . "\$(INST_BIN)/ispMailGate: ispMailGate\n\n"

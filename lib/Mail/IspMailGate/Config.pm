@@ -5,13 +5,12 @@ package Mail::IspMailGate::Config;
 
 require 5.004;
 
-require Mail::IspMailGate::Filter;
-require Mail::IspMailGate::Filter::Banner;
-require Mail::IspMailGate::Filter::Dummy;
-require Mail::IspMailGate::Filter::VirScan;
+use Mail::IspMailGate::Filter ();
+use Mail::IspMailGate::Filter::Dummy ();
+use Mail::IspMailGate::Filter::VirScan ();
 
 
-$VERSION = '1.003';
+$VERSION = '1.004';
 $PREFIX = "/usr/local/IspMailGate-${VERSION}";
 $LIBDIR = "${PREFIX}/lib";
 $ETCDIR = "${PREFIX}/etc";
@@ -36,7 +35,7 @@ $POSTMASTER = 'root@ispsoft.de';
 #
 # configuration for the virus-scanner
 #
-$VIRSCAN = '/usr/bin/antivir -rs $ipaths';
+$VIRSCAN = '/usr/bin/antivir -rs -nolnk -noboot $ipaths';
 @DEFLATER = ( { pattern => '\\.(tgz|tar\\.gz|tar\\.[zZ])$',
                 cmd => '/bin/gzip -cd $ipath | /bin/tar -xf -C $odir'
                 },
@@ -51,7 +50,7 @@ $VIRSCAN = '/usr/bin/antivir -rs $ipaths';
                 },
 	      { pattern => '\\.(lha|lzx)$',
                 cmd => '/usr/bin/lha $ifile w=$odir'
-                }     
+                }
 );
 
 
@@ -79,11 +78,6 @@ $MAILHOST = 'localhost';
 
 @RECIPIENTS =
     ( { 'recipient' => '[@\.]ispsoft\.de$',
-        'filters' => [ Mail::IspMailGate::Filter::VirScan->new({}) ] },
-      { 'sender' => '[@\.]ispsoft.de$',
-	'filters' => [ Mail::IspMailGate::Filter::Banner->new
-		          ({'plain' => '/etc/mail/banner.plain',
-			    'html' => '/etc/mail/banner.html'}) ] }
-	     );
+        'filters' => [ Mail::IspMailGate::Filter::VirScan->new({}) ] } );
 
 1;

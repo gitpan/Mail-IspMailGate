@@ -3,17 +3,17 @@
 require 5.004;
 use strict;
 
-require IO::File;
-require IO::Tee;
-require Mail::IspMailGate::Parser;
-require Net::SMTP;
-require Sys::Syslog;
-require File::Path;
+use IO::File ();
+use IO::Tee ();
+use Mail::IspMailGate::Parser ();
+use Net::SMTP ();
+use Sys::Syslog ();
+use File::Path ();
 
 
 package Mail::IspMailGate;
 
-$Mail::IspMailGate::VERSION = '0.1003';
+$Mail::IspMailGate::VERSION = '0.1004';
 
 
 package Mail::IspMailGate::SMTP;
@@ -129,13 +129,14 @@ sub GetUniqueId ($) {
 #            $entity - MIME entity to send
 #            $sender - Mail sender
 #            $recipients - List of recipients
+#            $host - Delivery host
 #
 #   Returns: Nothing
 #
 ############################################################################
 
-sub SendMimeMail ($$$$) {
-    my($self, $entity, $sender, $recipients) = @_;
+sub SendMimeMail ($$$$$) {
+    my($self, $entity, $sender, $recipients, $host) = @_;
 
     if ($self->{'noMails'}) {
 	if (ref($self->{'noMails'}) eq 'SCALAR') {
@@ -146,7 +147,12 @@ sub SendMimeMail ($$$$) {
 	return;
     }
 
-    my($mailHost) = $Mail::IspMailGate::Config::MAILHOST;
+    my $mailHost = $Mail::IspMailGate::Config::MAILHOST;
+    my $addIspMailGate = 1;
+    if ($host) {
+	$addIspMailGate = 0;
+	$mailHost = $host;
+    }
 
     my($smtp) = Mail::IspMailGate::SMTP->new($mailHost);
     if (!$smtp) {
@@ -158,7 +164,7 @@ sub SendMimeMail ($$$$) {
     }
     my($r);
     foreach $r (@$recipients) {
-	if (!$smtp->to($r . ".ispmailgate")) {
+	if (!$smtp->to($addIspMailGate ? "$r.ispmailgate" : $r)) {
 	    $self->Fatal("Failed to pass recipient $r to mail server"
 			 . " $mailHost: $!");
 	}
@@ -324,13 +330,14 @@ sub MakeFilterList ($$) {
 #   Inputs:  $self - This instance
 #            $sender - Mail sender
 #            $recipients - Array ref to list of recipients
+#            $host - The delivery host
 #
 #   Returns: Nothing; exits in case of error
 #
 ############################################################################
 
 sub Main($$$$) {
-    my($self, $infh, $sender, $recipients) = @_;
+    my($self, $infh, $sender, $recipients, $host) = @_;
     my $id = $self->GetUniqueId();
     my($tmpDir) = (exists($self->{'tmpDir'}) ?
 	$self->{'tmpDir'} : $Mail::IspMailGate::Config::TMPDIR) . "/$id";
@@ -446,7 +453,7 @@ sub Main($$$$) {
 	}
 	if (@rList) {
 	    $self->Debug("Array of parts while delivering: " . ($eNew->parts()));
-	    $self->SendMimeMail($eNew, $sender, \@rList);
+	    $self->SendMimeMail($eNew, $sender, \@rList, $host);
 	}
     } until ($done);
 }

@@ -23,7 +23,7 @@ sub getSign { "X-ispMailGateFilter"; };
 #                                       'neg' for the negative direction
 #
 #   Returns:  Object or error message
-#    
+#
 #####################################################################
 
 sub new ($$$) {
@@ -55,7 +55,7 @@ sub new ($$$) {
 #                       4. 'globHead' the header of the whole Mail
 #
 #   Returns:  error message, if any
-#    
+#
 #####################################################################
 
 sub filterFile ($$$) {
@@ -87,7 +87,7 @@ sub filterFile ($$$) {
 sub setEncoding ($$$) {
     my ($self, $entity) = @_;
     my ($head) = $entity->head();
-    
+
     '';
 }
 
@@ -97,13 +97,13 @@ sub setEncoding ($$$) {
 #
 #   Purpose:   determines wether this message must be filtered and
 #             allowed to modify $self the message and so on
-#             
+#
 #   Inputs:   $self   - This class
 #             $entity - the whole message
-#                       
+#
 #
 #   Returns:  1 if it must be, else 0
-#    
+#
 #####################################################################
 
 sub mustFilter ($$) {

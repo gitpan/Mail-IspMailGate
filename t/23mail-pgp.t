@@ -5,12 +5,13 @@
 
 use strict;
 
-require Symbol;
-require MIME::Entity;
-require Mail::IspMailGate;
-require Mail::IspMailGate::Parser;
-require Mail::IspMailGate::Filter;
-require Mail::IspMailGate::Filter::PGP;
+use Symbol ();
+use MIME::Entity ();
+use Mail::IspMailGate ();
+use Mail::IspMailGate::Parser ();
+use Mail::IspMailGate::Filter ();
+use Mail::IspMailGate::Filter::PGP ();
+use Mail::IspMailGate::Filter::Packer ();
 
 # Find pgp
 my($pgp, $dir);
@@ -94,7 +95,7 @@ print (($entity ? "" : "not "), "ok 3\n");
 
 my($str) = $entity->as_string();
 my $fh = Symbol::gensym();
-if (!open($fh, ">output/23mp.in")  ||  !(print $fh $str)  ||  !close($str)) {
+if (!open($fh, ">output/23mp.in")  ||  !(print $fh $str)  ||  !close($fh)) {
     die "Error while creating input file output/23mp.in: $!";
 }
 if (!open($fh, "<output/23mp.in")) {
