@@ -2,15 +2,17 @@
 #
 
 
-package Mail::IspMailGate::Filter::VirScan;
-
-require 5.004;
 use strict;
-require File::Copy;
-require File::Basename;
-require Symbol;
+require 5.005;
 
-require Mail::IspMailGate::Filter;
+use File::Copy ();
+use File::Basename ();
+use Symbol ();
+use Mail::IspMailGate::Filter ();
+use File::Spec ();
+
+
+package Mail::IspMailGate::Filter::VirScan;
 
 @Mail::IspMailGate::Filter::VirScan::ISA = qw(Mail::IspMailGate::Filter);
 
@@ -22,13 +24,13 @@ sub getSign { "X-ispMailGate-VirScan" }
 #
 #   Purpose:   determines wether this message must be filtered and
 #             allowed to modify $self the message and so on
-#             
+#
 #   Inputs:   $self   - This class
 #             $entity - the whole message
-#                       
+#
 #
 #   Returns:  1 if it must be, else 0
-#    
+#
 #####################################################################
 
 sub mustFilter ($$) {
@@ -42,13 +44,13 @@ sub mustFilter ($$) {
 #   Name:     hookFilter
 #
 #   Purpose:  a function which is called after the filtering process
-#             
+#
 #   Inputs:   $self   - This class
 #             $entity - the whole message
-#                       
+#
 #
 #   Returns:  errormessage if any
-#    
+#
 #####################################################################
 
 sub hookFilter ($$) {
@@ -70,7 +72,7 @@ sub hookFilter ($$) {
 #             $attr   - Attributes
 #
 #   Returns:  the name of the new dir
-#    
+#
 #####################################################################
 
 sub createDir ($$) {
@@ -101,7 +103,7 @@ sub createDir ($$) {
 #             $dir    - Directory name
 #
 #   Returns:  File list; dies in case of trouble
-#    
+#
 #####################################################################
 
 sub checkDirFiles ($$) {
@@ -144,38 +146,56 @@ sub checkDirFiles ($$) {
 #   Inputs:   $self     - This instance
 #             $attr     - The $attr argument of filterList
 #             $ipath    - The archive path
-#             $deflater - An element from the @DEFLATER list that
+#             $deflater - An element from the deflater list that
 #                         matches $ipath.
 #
 #   Returns:  File list; dies in case of trouble
-#    
+#
 #####################################################################
-
-sub _ShellSafe($) {
-    my($str) = @_;
-    $str =~ s/[\000-\037]//g;
-    $str =~ s/([^a-zA-Z])/\\$1/g;
-    $str;
-}
-
 
 sub checkArchive ($$$$) {
     my($self, $attr, $ipath, $deflater) = @_;
+    my $cfg = $Mail::IspMailGate::Config::config;
 
     # Create a new directory for extracting the files into it.
-    my($idir) = File::Basename::dirname($ipath);
-    my($ifile) = File::Basename::basename($ipath);
-    my($odir) = $self->createDir($attr);
-    my($ofile) = $ifile;
-    my($opath) = "$odir/$ofile";
-    my($cmd) = $deflater->{'cmd'};
-    # no strict 'refs';
-    # $cmd =~ s/\$(\w+)/_ShellSafe(${$1})/eg;
-    # use strict 'refs';
-    $cmd =~ s/\$(\w+)/_ShellSafe(eval "\$$1")/eg;
+    my %patterns = ('ipath' => $ipath,
+		    'idir'  => File::Basename::dirname($ipath),
+		    'ifile' => File::Basename::basename($ipath),
+		    'odir'  => $self->createDir($attr));
+    $patterns{'ofile'} = $patterns{'ifile'};
+    $patterns{'opath'} = File::Spec->catfile($patterns{'odir'},
+					     $patterns{'ofile'});
+    my $cmd = $deflater->{'cmd'};
+    $cmd =~ s/\$(\w+)/exists($patterns{$1}) ? quotemeta($patterns{$1}) :
+                      exists $cfg->{$1} ? $cfg->{$1} : ''/esg;
+    $attr->{'main'}->Debug("Running command: $cmd");
     system $cmd;
 
-    $self->checkDirFiles($odir);
+    $self->checkDirFiles($patterns{'odir'});
+}
+
+
+############################################################################
+#
+#   Name:    HasVirus
+#
+#   Purpose: Takes the virus scanners output and parses it for virus
+#	     warnings.
+#
+#            This version is well suited for the AntiVir virus scanner.
+#            You typically need to override it for other programs.
+#
+#   Input:   $self - Instance
+#            $output - Message emitted by the virus scanner
+#
+#   Returns: TRUE if $output indicates a virus, FALSE otherwise
+#
+############################################################################
+
+sub HasVirus {
+    my $self = shift; my $str = shift;
+    my $result = join('\n', grep { $_ =~ /\!Virus\!/ } split(/\n/, $str));
+    $result ? "Alert: A Virus has been detected:\n\n$result\n" : '';
 }
 
 
@@ -190,13 +210,14 @@ sub checkArchive ($$$$) {
 #             $ipath  - the file to check
 #
 #   Returns:  error message, if any
-#    
+#
 #####################################################################
 
 sub checkFile ($$$) {
     my ($self, $attr, $ipath) = @_;
     my(@simpleFiles, @checkFiles);
     my($ret) = '';
+    my $cfg = $Mail::IspMailGate::Config::config;
 
     @checkFiles = ($ipath);
     my($file);
@@ -209,7 +230,7 @@ sub checkFile ($$$) {
 
 	# Check whether file is an archive
 	my($deflater);
-	foreach $deflater (@Mail::IspMailGate::Config::DEFLATER) {
+	foreach $deflater (@{$cfg->{'virscan'}->{'deflater'}}) {
 	    if ($file =~ /$deflater->{'pattern'}/) {
 		push(@checkFiles,
 		     $self->checkArchive($attr, $file, $deflater));
@@ -225,24 +246,29 @@ sub checkFile ($$$) {
     }
 
     if (@simpleFiles) {
-	my($cmd) = $Mail::IspMailGate::Config::VIRSCAN;
-	my($output);
+	my $cmd = $cfg->{'virscan'}->{'scanner'};
+	$cmd =~ s/\$antivir_path/$cfg->{'antivir_path'}/g;
+	my $output;
 	if ($cmd =~ /\$ipaths/) {
 	    # We may scan all files with a single command
 	    my($ipaths) = '';
 	    foreach $file (@simpleFiles) {
-		$ipaths .= ' ' . _ShellSafe($file);
+		$ipaths .= ' ' . quotemeta($file);
 	    }
-	    $cmd =~ s/\$ipaths/$ipaths/;
+	    $cmd =~ s/\$ipaths/$ipaths/sg;
+	    $cmd =~ s/\$(\w+)/exists $cfg->{$1} ? $cfg->{$1} : ''/seg;
+	    $attr->{'main'}->Debug("Running command: $cmd");
 	    $output = `$cmd`;
-	    $ret .= &$Mail::IspMailGate::Config::HASVIRUS($output);
+	    $ret .= $self->HasVirus($output);
         } else {
 	    # We need to scan any file separately
 	    foreach $file (@simpleFiles) {
-		$ipath = _ShellSafe($file);
-		$cmd =~ s/\$ipath/$ipath/;
+		$ipath = quotemeta($file);
+		$cmd =~ s/\$ipath/$ipath/sg;
+		$cmd =~ s/\$(\w+)/exists $cfg->{$1} ? $cfg->{$1} : ''/seg;
+		$attr->{'main'}->Debug("Running command: $cmd");
 		$output = `$cmd`;
-	        $ret .= &$Mail::IspMailGate::Config::HASVIRUS($output);
+	        $ret .= $self->HasVirus($output);
 	    }
         }
     }
@@ -264,11 +290,12 @@ sub checkFile ($$$) {
 #                       4. 'globHead'
 #
 #   Returns:  error message, if any
-#    
+#
 #####################################################################
 
 sub filterFile ($$) {
     my ($self, $attr) = @_;
+    my $cfg = $Mail::IspMailGate::Config::config;
 
     my ($body) = $attr->{'body'};
     my ($globHead) = $attr->{'globHead'};
@@ -280,9 +307,6 @@ sub filterFile ($$) {
 	return $ret;
     }
 
-    my ($cmd);
-    $cmd = $Mail::IspMailGate::Config::VIRSCAN;
-    
     $ret = $self->checkFile($attr, $ifile);
     $attr->{'main'}->Debug("Returning, result $ret");
     $ret;
@@ -300,6 +324,7 @@ __END__
 
 Mail::IspMailGate::Filter::VirScan  - Scanning emails for Viruses
 
+
 =head1 SYNOPSIS
 
  # Create a filter object
@@ -313,10 +338,6 @@ Mail::IspMailGate::Filter::VirScan  - Scanning emails for Viruses
      });
  if ($result) { die "Error: $result"; }
 
-=head1 VERSION AND VOLATILITY
-
-    $Revision 1.0 $
-    $Date 1998/04/05 18:46:12 $
 
 =head1 DESCRIPTION
 
@@ -332,57 +353,57 @@ and other known archive types by using external dearchiving utilities like
 I<unzip>, I<tar> and I<gzip>. Known extensions and dearchivers are
 configurable, so you can customize them for your own needs.
 
+
 =head1 CUSTOMIZATION
 
-The virus scanner module depends on some variables from the
+The virus scanner module depends on some items in the
 Mail::IspMailGate::Config module:
 
 =over 4
 
-=item $VIRSCAN
+=item $cfg->{'antivir_path'}
+
+Path of the AntiVir binary, for example
+
+  $cfg->{'antivir_path'} = '/usr/bin/antivir';
+
+=item $cfg->{virscan}->{scanner}
 
 A template for calling the external virus scanner; example:
 
-    $VIRSCAN = '/usr/bin/virusx $ipaths';
+    $cfg->{'virscan'}->{'scanner'} =
+	'$antivir_path -rs -nolnk -noboot $ipaths';
 
 The template must include either of the variable names $ipath or $ipaths;
 the former must be used, if the virus scanner cannot accept more than one
 file name with one call. Note the use of single quotes which prevent
 expanding the variable name!
 
-=item $HASVIRUS
+Additionally the pattern $antivir_path may be used for the path to
+the antivir binary.
 
-A anonymous Perl subroutine which receives the virus scanners output as
-a string. It must return TRUE, if the output indicates a virus and
-FALSE otherwise. Example:
+=item $cfg->{virscan}->{deflater}
 
-    $HASVIRUS = sub ($) {
-        my($str) = shift;
-	return (defined($str) && $str eq 'virus detected');
-    }
-
-=item @DEFLATER
-
-This is an array of known archive deflaters. Each element of the array
-is a hash ref with the attributes C<cmd>, a template for calling the
+This is an array ref of known archive deflaters. Each element of the
+array is a hash ref with the attributes C<cmd>, a template for calling the
 dearchiver and C<pattern>, a Perl regular expression for detecting
 file names which refer to archives that this program might extract.
 An example which configures the use of C<unzip>, C<tar> and C<gzip>:
 
-    @DEFLATER =
-        ( { pattern => '\\.(tgz|tar\\.gz|tar\\.[zZ])$',
-            cmd => '/bin/gzip -cd $ipath | /bin/tar -xf -C $odir'
+    $cfg->{'virscan'}->{'deflater'} =
+        [ { pattern => '\\.(tgz|tar\\.gz|tar\\.[zZ])$',
+            cmd => '$gzip_path -cd $ipath | /bin/tar -xf -C $odir'
           },
           { pattern => '\\.tar$',
-            cmd => '/bin/tar -xf -C $odir'
+            cmd => '$tar_path -xf -C $odir'
 	  },
 	  { pattern => '\\.(gz|[zZ])$',
-            cmd => '/bin/gzip -cd $ipath >$opath'
+            cmd => '$gzip_path -cd $ipath >$opath'
           },
           { pattern => '\\.zip$',
-            cmd => '/usr/bin/unzip $ifile -d $odir'
+            cmd => '$unzip_path $ifile -d $odir'
           }
-        );
+        ];
 
 Again, note the use of single quotes to prevent variable expansion and
 double backslashes for passing a single backslash in the Perl regular
@@ -420,13 +441,27 @@ an LhA deflater:
 Same as $ifile and $odir/$ofile; for example gzip needs this, when it
 runs as a standalone deflater and not as a backend of tar.
 
+=item $gzip_path
+
+=item $tar_path
+
+=item $unzip_path
+
+=item $lha_path
+
+=item $unarj_path
+
+These are the paths of the corresponding binaries and read from
+$cfg->{'gzip_path'}, $cfg->{'tar_path'} and so on.
+
 =back
 
 =back
+
 
 =head1 PUBLIC INTERFACE
 
-=over 4
+=over
 
 =item I<checkFile $ATTR, $FILE>
 
@@ -446,13 +481,26 @@ the scanner will be called for any file. See L<CONFIGURATION> above.
 
 This function is called from within I<checkFile> to extract the archive
 $IPATH by using the $DEFLATER->{'cmd'} ($DEFLATER is an element from
-the @DEFLATER list). The $ATTR argument is the same as in I<checkFile>.
+the deflater list). The $ATTR argument is the same as in I<checkFile>.
 
 The function creates a new temporary directory and extracts the archive
 contents into that directory. Finally it returns a list of files that
 have been extracted.
 
+=item I<HasVirus>
+
+  $hasVirus = $self->HasVirus($OUTPUT)
+
+(Instance method) This method takes the string $OUTPUT, which is a message
+emitted by the virus scanner and parses it for possible virus warnings.
+The method returns TRUE, if such warnings are detected or FALSE otherwise.
+
+The default implementation knows about the output of the I<AntiVir> virus
+scanner. To use the filter with other virus scanners, you typically
+dervice a subclass from it which overrides this method.
+
 =back
+
 
 =head1 SEE ALSO
 

@@ -16,7 +16,7 @@ $Mail::IspMailGate::Parser::VERSION = '0.01';
 
 sub new ($$) {
     my $class = shift;  my %attr = @_;
-    $attr{'output_dir'} ||= $Mail::IspMailGate::Config::TMPDIR;
+    $attr{'output_dir'} ||= $Mail::IspMailGate::Config::config->{'tmp_dir'};
     $attr{'output_prefix'} ||= 'part';
     $attr{'output_to_core'} ||= 'NONE';
     $class->SUPER::new(%attr);

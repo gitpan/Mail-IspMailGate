@@ -238,8 +238,6 @@ sub IsEq ($$) {
 }
 
 
-$Mail::IspMailGate::Filter::VERSION = "1.000";
-
 package Mail::IspMailGate::Filter::InOut;
 
 @Mail::IspMailGate::Filter::InOut::ISA = qw(Mail::IspMailGate::Filter);

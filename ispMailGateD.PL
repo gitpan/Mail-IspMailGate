@@ -1,7 +1,34 @@
 #!/usr/bin/perl
 
-my($script) = <<'SCRIPT';
-~STARTPERL~
+use lib "lib";
+use vars qw($script);
+
+use Config ();
+use Mail::IspMailGate::Config ();
+
+
+my $cfg = $Mail::IspMailGate::Config::config;
+sub Substitute ($) {
+    my $s = shift;
+    return $cfg->{$s} if exists $cfg->{$s};
+    return $Config::Config{$s} if exists $Config::Config{$s};
+    die "Unknown variable: $s";
+}
+$script =~ s/\~(\w+)\~/Substitute($1)/eg;
+
+if (!open(FILE, ">ispMailGateD")) {
+    die "Cannot open ispMailGate for writing: $!";
+}
+
+
+
+if (!(print FILE $script)  ||  !close(FILE)) {
+    die "Error while writing $script: $!";
+}
+
+
+BEGIN { $script = <<'SCRIPT' };
+~startperl~
 #
 #    ispMailGate - delivery agent for filtering and scanning E-Mail
 #
@@ -41,21 +68,19 @@ my($script) = <<'SCRIPT';
 ############################################################################
 
 
-require 5.004;
+require 5.005;
 use strict;
 
-use constant LIBDIR => "~LIBDIR~";
-
-use lib LIBDIR;
-require Sys::Syslog;
-require Mail::IspMailGate;
+use Sys::Syslog ();
+use Mail::IspMailGate ();
+use Getopt::Long ();
 
 
 delete @ENV{'IFS', 'CDPATH', 'ENV', 'BASH_ENV'};
 $ENV{'PATH'} = '/bin:/usr/bin';
 
-my($debugging) = 0;
-my(@args) = @ARGV;
+my $debugging = 0;
+my @args = @ARGV;
 
 
 sub ErrExit ($) {
@@ -79,11 +104,12 @@ sub ErrExit ($) {
 ############################################################################
 
 sub Usage () {
-    my($tmpDir) = $Mail::IspMailGate::Config::TMPDIR
-	= $Mail::IspMailGate::Config::TMPDIR;
-    my($pidFile) = $Mail::IspMailGate::Config::PIDFILE;
-    my($facility) = $Mail::IspMailGate::Config::FACILITY;
-    my($unixSock) = $Mail::IspMailGate::Config::UNIXSOCK;
+    my $cfg = $Mail::IspMailGate::Config::config;
+    my $tmpDir = $cfg->{'tmp_dir'};
+    my $pidFile = $cfg->{'pid_file'};
+    my $facility = $cfg->{'facility'};
+    my $unixSock = $cfg->{'unix_sock'};
+    my $mailHost = $cfg->{'mail_host'};
 
     print << "EOF";
 Usage:
@@ -91,24 +117,21 @@ Usage:
   $0 [options] -f sender recipient1 [... recipientN]
 
 Possible options are:
-  -d | -debug | --debug            Run in debugging mode
-  -n | -nomails | --nomails        Do not send mails, but print them to
-                                   stdout. This is mainly usefull for
-				   debugging purposes.
-  -s | -server | --server          Run as a server; default is reading and
-                                   processing  a single mail from stdin.
-  -t | -tmpdir | --tmpdir          Set directory for temporary files;
-                                   defaults to $tmpDir.
+  --debug		Turn on debugging mode
+  --nomails		Do not send mails, but print them to stdout. This is
+			mainly useful for debugging purposes.
+  --server		Run as a server; default is reading a single mail from
+			stdin.
+  --tmp-dir=<dir>	Set directory for temporary files; defaults to
+			$tmpDir.
+  --mail-host=<h>	Use the given host for delivery; defaults to
+			$mailHost.
 
 Server-mode options are:
-  -a | -facility | --facility      Set syslog facility; defaults to
-                                   $facility.
-  -p | -pidfile | --pidfile        Set path of PID file; defaults to
-                                   $pidFile.
-  -u | -unixsock | --unixsock      Set path of Unix socket; defaults to
-                                   $unixSock.
-       -nofork | --nofork          Suppress forking (usefull for debugging
-				   only)
+  --facility=<f>	Set syslog facility; defaults to $facility.
+  --pid-file		Set path of PID file; defaults to $pidFile.
+  --unix-sock		Set path of Unix socket; defaults to $unixSock.
+  --nofork		Suppress forking. For debugging only.
 EOF
 
     exit(1);
@@ -171,63 +194,30 @@ sub Main ($$$$$) {
     #
     #   Process command line arguments
     #
-    my ($arg, $daemon, @recipients);
-    my($unixSock) = $Mail::IspMailGate::Config::UNIXSOCK;
-    my($facility) = $Mail::IspMailGate::Config::FACILITY;
-    my($pidFile) = $Mail::IspMailGate::Config::PIDFILE;
-    my($tmpDir);
-    my($from, $noMails, $noFork);
+    my($arg, $daemon, $from);
+    my $cfg = $Mail::IspMailGate::Config::config;
+    my $unixSock = $cfg->{'unix_sock'};
+    my $facility = $cfg->{'facility'};
+    my $pidFile = $cfg->{'pid_file'};
+    my $mails = 1;
+    my $fork = 1;
+    my $tmpDir = $cfg->{'tmp_dir'};
     my @args = @ARGV;
-    my $deliveryHost;
+    my $deliveryHost = $cfg->{'mail_host'};
 
-    while ($arg = shift @ARGV) {
-	if ($arg eq '-s'  ||  $arg eq '-server'  ||  $arg eq '--server') {
-	    $daemon = 1;
-	} elsif ($arg eq '-u'  ||  $arg eq '-unixsock'
-		 ||  $arg eq '--unixsock') {
-	    if (!defined($unixSock = shift @ARGV)) {
-		print "Option --unixsock without argument.\n";
-		Usage();
-	    }
-	} elsif ($arg eq '-a'  ||  $arg eq '-facility'
-		 ||  $arg eq '--facility') {
-	    if (!defined($facility = shift @ARGV)) {
-		print "Option --facility without argument.\n";
-		Usage();
-	    }
-	} elsif ($arg eq '-n'  ||  $arg eq '-nomails'
-		 ||  $arg eq '--nomails') {
-	    $noMails = 1;
-	} elsif ($arg eq '-nofork'  ||  $arg eq '--nofork') {
-	    $noFork = 1;
-	} elsif ($arg eq '-p'  ||  $arg eq '-pidfile'
-		 ||  $arg eq '--pidfile') {
-	    if (!defined($pidFile = shift @ARGV)) {
-		print "Option --pidfile without argument.\n";
-		Usage();
-	    }
-	} elsif ($arg eq '-p'  ||  $arg eq '-tmpdir'
-		 ||  $arg eq '--tmpdir') {
-	    if (!defined($tmpDir = shift @ARGV)) {
-		print "Option --tmpdir without argument.\n";
-		Usage();
-	    }
-	} elsif ($arg eq '-f'  ||  $arg eq '-from'  ||  $arg eq '--from') {
-	    if (!defined($from = shift @ARGV)) {
-		print "Option --from without argument.\n";
-		Usage();
-	    }
-	} elsif ($arg eq '-d'  ||  $arg eq '-debug'  ||  $arg eq '--debug') {
-	    $debugging = 1;
-        } elsif ($arg eq '-h'  ||  $arg eq '-host'  ||  $arg eq '--host') {
-	    if (!defined($deliveryHost = shift @ARGV)) {
-		print "Option --host without argument.\n";
-		Usage();
-	    }
-	} else {
-	    push(@recipients, $arg);
-	}
-    }
+    Getopt::Long::GetOptions('server', \$daemon,
+			     'unix-sock', \$unixSock,
+			     'facility', \$facility,
+			     'mails!', \$mails,
+                             'fork!', \$fork,
+                             'pid-file=s', \$pidFile,
+                             'tmp-dir=s', \$tmpDir,
+                             'from=s', \$from,
+			     'debug', \$debugging,
+			     'help', \&Usage,
+			     'mail-host', \$deliveryHost
+                            );
+    my @recipients = @ARGV;
 
     if ($daemon && (@recipients || $from)) {
 	print("Option --server is not compatible with --from or recipient",
@@ -239,42 +229,41 @@ sub Main ($$$$$) {
 	Usage();
     }
 
-    my($uid) = $Mail::IspMailGate::Config::USER;
+    if ($deliveryHost eq 'ispmailgate') {
+	$deliveryHost = undef;
+    }
+
+    my $uid = $cfg->{'mail_user'};
     if ($uid !~ /^\-?\d+$/  &&
 	!defined($uid = ((getpwnam($uid))[2]))) {
-	ErrExit("Unknown user: " . $Mail::IspMailGate::Config::USER);
+	ErrExit("Unknown user: $cfg->{'mail_user'}");
     }
-    my($gid) = $Mail::IspMailGate::Config::GROUP;
+    my $gid = $cfg->{'mail_group'};
     if ($gid !~ /^\-?\d+$/  &&
 	!defined($gid = ((getgrnam($gid))[2]))) {
-	ErrExit("Unknown group: " . $Mail::IspMailGate::Config::GROUP);
+	ErrExit("Unknown group: $cfg->{'mail_group'}");
     }
 
     if (defined(&Sys::Syslog::setlogsock)) {
 	# This fails on some Solaris systems ...
-        #eval { Sys::Syslog::setlogsock('unix'); };
-        Sys::Syslog::setlogsock('unix');
+        eval { Sys::Syslog::setlogsock('unix'); };
     }
-    &Sys::Syslog::openlog('ispMailGateD', 'pid,cons', $facility);
+    &Sys::Syslog::openlog('ispMailGateD', 'pid', $facility);
 
-    my($attr) = {
-	'debug' => $debugging
+    my($attr) =
+        { 'debug' => $debugging,
+          'noMails' => !$mails,
+	  'tmpDir' => $tmpDir
 	};
-    if ($noMails) {
-	$attr->{'noMails'} = 1;
-    }
-    if ($tmpDir) {
-	$attr->{'tmpDir'} = $tmpDir;
-    }
 
     if (!$daemon) {
 	$) = $gid;
 	$( = $gid;
 	$> = $uid;
 	$< = $uid;
-	if ($debugging) {
-	    Sys::Syslog::syslog('debug', "Command line arguments: " . join(" ", @args));
-	}
+	Sys::Syslog::syslog('debug',
+                            "Command line arguments: " . join(" ", @args))
+	    if ($debugging);
 	Main(\*STDIN, $from, \@recipients, $attr, $deliveryHost);
 	exit(0);
     }
@@ -300,16 +289,13 @@ sub Main ($$$$$) {
 	ErrExit("Cannot change mode of $unixSock: $!");
     }
 
-    if (!$noFork) {
+    if ($fork) {
 	$SIG{CHLD} = \&catchChilds;
 
+	# Detach from the shell, as good as possible
 	my $pid;
-	if (!defined($pid = fork())) {
-	    ErrExit("Cannot fork(): $!");
-	}
-	if ($pid) {
-	    exit 0;
-	}
+	ErrExit("Cannot fork(): $!") unless defined($pid = fork());
+	exit 0 if $pid;
 
 	if (open(PID, ">$pidFile")) {
 	    print PID "$$";
@@ -326,19 +312,18 @@ sub Main ($$$$$) {
     $> = $uid;
     $< = $uid;
 
-    if ($debugging) {
-	&Sys::Syslog::syslog('debug',
-			     'Waiting for connections at %s', $unixSock);
-    }
+    &Sys::Syslog::syslog('debug',
+			 'Waiting for connections at %s', $unixSock)
+        if $debugging;
+
     while (accept(CLIENT, SERVER)) {
-	if ($debugging) {
-	    &Sys::Syslog::syslog('debug', 'Server accepting child');
-	}
+	&Sys::Syslog::syslog('debug', 'Server accepting child')
+	    if $debugging;
 
 	#
 	#  Fork a child
 	#
-	if (!$noFork) {
+	if ($fork) {
 	    my $pid;
 	    if (!defined($pid = fork())) {
 		Sys::Syslog::syslog('err', "Cannot fork: $!");
@@ -389,7 +374,7 @@ sub Main ($$$$$) {
 	    ErrExit('Missing sender');
 	}
 
-	Main(\*CLIENT, $from, $recipients, $attr);
+	Main(\*CLIENT, $from, $recipients, $attr, $deliveryHost);
 	exit(0);
     }
 
@@ -408,7 +393,7 @@ ispMailGate - a general purpose filtering MDA for sendmail
 This is an alpha release! What you are using now is tested by using a
 comparatively small test suite in our local environment. You are perhaps
 planning to include this software in a production environment. We don't
-discourage to do so, but we strongly advise you to be extremely carefull.
+discourage to do so, but we strongly advise you to be extremely careful.
 In particular, start by filtering only mails for a very small number of email
 adresses, perhaps your own and something similar. That is, be extremely
 cautios when modifying your sendmail configuration.
@@ -423,11 +408,11 @@ For running standalone:
 
     ispMailGateD -f <sender> <recipient1> [... <recipientN>]
 
-For running as a daemon (not yet possible, as the wrapper is still
-missing):
+For running as a daemon:
 
     ispMailGateD -s [-d] [-t <tmpdir>] [-a <facility>] [-p <pidfile>]
         [-u <unixsock>]
+
 
 =head1 DESCRIPTION
 
@@ -444,17 +429,10 @@ except for debugging and similar tasks. The recommended mode will be
 running the program as a server, completely independent from sendmail.
 A small C program (called a wrapper) will instead be configured as
 sendmails MDA. This wrapper connects to the server via a well known Unix
-socket (by default ~UNIX_SOCK~), passes its command line arguments and
+socket (by default ~unix_sock~), passes its command line arguments and
 standard input to the server and disconnects. Obviously this second
 solution has much better performance as you load the Perl interpreter
 only once.
-
-Unfortunately the wrapper is not yet available, due to some problems with
-Perl's I/O. (Perl won't notice EOF on the socket as long as the client
-doesn't close the connection. On the other hand the client has to hold
-the connection open for receiving error messages which will be written
-to stderr so that sendmail recognizes them. We are thankfull for any
-suggestion to solve this.
 
 
 =head2 Command Line Interface
@@ -463,36 +441,36 @@ The following options affect ispMailGate's behaviour:
 
 =over 4
 
-=item -a <fac>, -facilty <fac>, --facility <fac>
+=item --facility=<fac>
 
 Advices the ispMailGate to use syslog facility <fac>. By default syslog
-entries are written as facility ~FACILITY~. 
+entries are written as facility ~facility~.
 
-=item -d, -debug, --debug
+=item --debug
 
 The program runs in debugging mode, logging information into the syslog.
 Perhaps more information than you like ... :-)
 
-=item -f <sender>, -from <sender>, --from <sender>
+=item --from=<sender>
 
 Sets a mails sender.
 
-=item -s, -server, --server
+=item --server
 
 Tells the program not to run in standalone mode and instead detach from
 the shell to enter server mode. This mode is currently not usable, as
 the wrapper is not yet available.
 
-=item -t <dir>, -tmpdir <dir>, --tmpdir <dir>
+=item --tmp-dir=<dir>
 
 Sets the programs directory for temporary files to <dir>. When unpacking
 a complex and big multipart mail, the ispMailGate may need surprisingly
-much space. By default ~TMPDIR~ is used.
+much space. By default ~tmp_dir~ is used.
 
-=item -u <sock>, -unixsock <sock>, --unixsocket <sock>
+=item --unix-sock=<sock>
 
 Tells the server to listen on file <sock> for unix socket connections.
-By default the server uses ~UNIXSOCK~.
+By default the server uses ~unix_sock~.
 
 =back
 
@@ -503,14 +481,13 @@ By default the server uses ~UNIXSOCK~.
 
 To start with the requirements: You need
 
-1.) A running sendmail (recommended: 8.8.5 or later); if you don't have
+1.) A running sendmail (recommended: 8.9.3 or later); if you don't have
 sendmail or an older version, you find the current release at
 
     ftp://ftp.sendmail.org/pub/sendmail
 
-2.) A late version of Perl (recommended: 5.004 or later); if you don't
-have Perl, shoot yourself in the foot (;-) or get it from any CPAN
-mirror, for example
+2.) A late version of Perl (5.005 or later); if you don't
+have Perl, get it from any CPAN mirror, for example
 
     ftp://ftp.funet.fi/pub/languages/perl/CPAN/src/5.0
 
@@ -542,30 +519,33 @@ You'll like it! :-)
 =head2 System preparation
 
 Although ispMailGate is usually started as root, because certain
-initialization setting need root permissions, it must not continue
-running as root. Instead it impersonates itself to a user ID that
-you select. I recommend creating a separate user C<ispmailgate> and
-a separate group C<ispmailgate>.
+initialization settings need root permissions, it must not continue
+running as root. Instead it impersonates itself to the same UID and
+GID that sendmail uses for delivering mails. In what follows, I
+assume UID I<daemon> and GID <mail>, as used on a Red Hat Linux
+box.
 
 IspMailGate needs its own directory for creating temporary files.
-Usually this could be C</var/spool/IspMailGate> or something
-similar. Make sure that the ispmailgate user (but noone else) has
-access to this directory:
+Usually this could be C</var/spool/ispmailgate> or something
+similar. Make sure that the daemon user from above, (but noone else)
+has access to this directory:
 
-    mkdir /var/spool/IspMailGate
-    chown ispmailgate /var/spool/IspMailGate
-    chgrp ispmailgate /var/spool/IspMailGate
-    chmod 700 /var/spool/IspMailGate
+    mkdir /var/spool/ispmailgate
+    chown daemon /var/spool/ispmailgate
+    chgrp mail /var/spool/ispmailgate
+    chmod 700 /var/spool/ispmailgate
 
 =head2 Program installation
 
-The program is installable like any other Perl module. However, you cannot
-use the automatic CPAN installation in that case. Instead, fetch the
-current archive from any CPAN mirror, for example
+The program is installable like any other Perl module. Indeed, you
+can even use the automatic CPAN installation. If you are not used
+to CPAN installation or cannot use the CPAN shell, you need to
+perform a manual installation: First, fetch the archive from any
+CPAN mirror, for example
 
     ftp://ftp.funet.fi/pub/languages/perl/CPAN/authors/id/JWIED
 
-extract the archive with
+and extract the archive with
 
     gzip -cd Mail-IspMailGate-<version>.tar.gz | tar xf -
 
@@ -573,211 +553,240 @@ After that, do a
 
     cd Mail-IspMailGate-<version>
 
-and start with editing the Configuration module
+and do a
 
-    lib/Mail/IspMailGate/Config.pm
-
-In particular you might like to modify the installation directories.
-For example, to install into /usr/local/IspMailGate/sbin,
-/usr/local/IspMailGate/lib and so on, you'd change the variable
-
-    $PREFIX = "/usr/local/IspMailGate";
-
-For a detailed description of the configuration file see
-L<CONFIGURATION FILE> below. Once this is done, install the program
-with
-
-    perl -Ilib Makefile.PL
+    perl Makefile.PL
     make
-    make test
-    make install
+    make test		# You need to be root here!
+    make install	# You need to be root here!
 
-Finally make sure that the ispMailGate binary can connect to the server.
-Assuming that you have installed in /usr/local/IspMailGate and that your
-sendmail is running as group C<mail>, do the following:
+While running "perl Makefile.PL", you'll be prompted a lot of questions.
+In general you can answer them by simply hitting return, the defaults
+should be fine. The questions are explained in the section CONFIGURATION
+FILE below, because your answers are used for creating this config file.
+L<CONFIGURATION FILE>.
 
-    chown ispmailgate /usr/local/IspMailGate/sbin/ispMailGate
-    chgrp mail /usr/local/IspMailGate/sbin/ispMailGate
-    chmod 4750 /usr/local/IspMailGate/sbin/ispMailGate
+If "make test" reports any errors, let me know.
+
 
 =head1 SENDMAIL CONFIGURATION
 
-Before modifying your sendmail configuration, think about the following:
-The crucial problem of using IspMailGate without damage is that you
-are working in a number of different steps. For example:
+To understand the required sendmail configuration, let's first take
+a look at the following diagram:
 
-=over 4
+	+----------------+
+	| Incoming       |
+	| mail for       |
+	| joe@ispsoft.de |
+	+----------------+
 
-=item second sendmail.cf
+	    |
+	    | Port 25
+	    | (SMTP)
+	    |
 
-In the first step you leave your /etc/sendmail.cf completely untouched.
-Instead you create a second file /etc/sendmail.cf.new, create files
-containing email messages (for example by saving them from your
-preferred email client) and then feed them into sendmail by using the
-following command:
+	+----------------------+        +---------------------+
+	|                      |        |                     |
+	|  Sendmail, with      |        |  IspMailGate        |
+	|  IspMailGate support |  ----> |  receives and       |
+	|  integrated          |        |  processes the mail |
+	|                      |        |                     |
+	+----------------------+        +---------------------+
 
-    cat mymail | sendmail -v -i -f<sender> <recipient>
+	   V					|
+						|
+        +---------------------------+	        | Port 26
+	| mailertable:              |	        |
+	| ispsoft.de => ispmailgate |           |
+	+---------------------------+	        |
 
-=item single user action
+				      +-----------------------+
+        +-------------------------+   |			      |
+        | Other mailertable:      |   |  Second sendmail,     |
+        | ispsoft.de => mailhost  | < |  without IspMailGate, |
+        +-------------------------+   |  other mailertable    |
+				      |                       |
+				      +-----------------------+
 
-If the first step seems to look good, you can go on modifying your
-true sendmail.cf. But don't let all mails be filtered! Instead let
-sendmail filter only mails for or from some selected people, that are
-aware of potential problems, for example your own mail. (You know of
-things that might happen, don't you? :-)
+The idea is that we have two sendmail instances: The first one is
+accepting mails from the outside world (it could well be smapd
+or another SMTP wrapper).
 
-Stay in this stage for at least a week or two. Contact different kind
-of people using all sort of email clients, send them mails and advise
-them to reply with all possible kinds of emails: Simple text documents,
-multipart messages, word documents (interesting thing if you verify
-the virus scanner ... ;-)
+Mails accepted by the first instance will optionally be piped into
+IspMailGate, depending on your mailertable or whatever method you
+choose for selecting a delivery agent.
 
-=item Final stage
+As soon as IspMailGate has processed your mails, they cannot be
+delivered to the same sendmail: Sendmail would detect the same
+recipients as before, and feed the mail back into IspMailGate.
+The immediate result would be an endless loop.
 
-Finally if all seems to be working well, you can enter the final stage
-and do the things you really want.
+Instead we configure another instance of sendmail, running for
+example on port 26, which accepts mails by IspMailGate. This
+second sendmail will typically be protected to the outside
+world, for example by using a packet filter.
+
+Of course it is possible to replace the second sendmail with
+a mail server running on another machine. However, I discourage
+you to do so, because IspMailGate has no integrated spooling
+system: If the foreign host would be down, you mail would be
+lost forever! However, you can easily configure the second
+sendmail for delivery to the same host, this time using a
+safe spooling system.
+
+
+=head2 Details
+
+Before reading on, you should have some basic knowledge on sendmail
+configuration. In particular you should be used to work with
+
+=over
+
+=item sendmail.mc
+
+the m4 macro file that is used to create sendmail.cf (If you
+had the impression that hacking sendmail.cf is the method
+of choice for configuring sendmail, your knowledge of sendmail
+is a little bit too basic :-)
+
+=item mailertable
+
+the file that is used for selecting delivery agents, based on
+a domain name
+
+=item sendmail.cw
+
+the file that is used for selecting "local" domains.
 
 =back
 
-=head2 Selecting the mails to feed into sendmail
+All these files are described in the file cf/README from the
+sendmail distribution. The same file is available online as
+sendmail documentation on http://www.sendmail.org. I strongly
+encourage you to read about it.
 
-The main problem with sendmail is that ruleset 0 (the set of rules deciding
-about how to handle an email) decides by looking at the recipient only.
-(At least I don't know of other possibilities, perhaps someone can tell?)
-IspMailGate is smarter and can make decisions based on both sender and
-recipients. However, it cannot decide on mails that don't reach it,
-thus you probably must feed mails into IspMailGate that aren't really
-interesting for it. For example, if you have an IspMailGate rule concerning
-mails sent from joe@ispsoft.de to *@perl.com then you must feed all
-mails into IspMailGate that have *@perl.com as recipient, regardless
-of the sender. IspMailGate fixes this problem by just ignoring such mails
-and just feeding them back into sendmail. However, a performance problem
-is still remaining.
+In what follows I assume that we have two hosts: I<gate.ispsoft.de>
+is a firewall running IspMailGate and two instances of sendmail.
+I<mail.ispsoft.de> is the real mail server. Mail for the domain
+I<ispsoft.de> shall be checked by IspMailGate, passed to the
+second instance of sendmail and finally delivered to the real
+mail server.
 
-Another problem is, that IspMailGate rules are based on Perl regular
-expressions. Of course they have a much finer granularity than sendmail
-rules have, but that may rarely be a problem in practice.
+Furthermore I assume that the cf files from the sendmail distribution
+are in F</usr/lib/sendmail-cf>. This is the case on a Red Hat Linux box,
+if you have installed the RPM package I<sendmail-cf>. It may be
+F</usr/share/sendmail> with SuSE Linux or anything else on another
+system.
 
-To sum it up: Sendmail must be configured to feed any mail into
-IspMailGate that has a recipient which *might* receive a mail that ought
-to be filtered via IspMailGate. In the extreme case this can mean that
-sendmail must feed all email traffic into IspMailGate before really
-delivering it.
+First of all we copy the file examples/ispmailgate.m4 from the
+IspMailGate distribution to F</usr/lib/sendmail-cf/mailer>.
+Then we create the following files:
 
-Now for the real stuff. In what follows I assume some knowledge of
-sendmail configuration. In particular you should be able to configure
-sendmail based on m4 macros, a detailed explanation of this process
-is contained in the file cf/README of the sendmail sources. Additionally
-you should know the concept of sendmail classes and how to work with
-them.
+=over
 
-We start with creating a file that holds a new sendmail class,
-called IMGR. The file might look as follows:
+=item  /etc/mail/sendmail.mc
 
-    # perlbug@perl.org is a possible IspMailGate recipient.
-    perlbug@perl.org    :ispmailgate
-    # Any mail going to *@ispsoft.de will be feed into IspMailGate
-    @ispsoft.de         :ispmailgate
-    # And finally *@*.uni-tuebingen.de
-    .uni-tuebingen.de   :ispmailgate
+  divert(-1)
+  include(`/usr/lib/sendmail-cf/m4/cf.m4')
+  define(`confCW_FILE', `/etc/mail/sendmail.cw')
+  define(`ALIAS_FILE', `/etc/mail/aliases')
+  define(`QUEUE_DIR', `/var/spool/mqueue')
+  OSTYPE(`linux')
+  FEATURE(use_cw_file)
+  FEATURE(mailertable, `hash -o /etc/mail/mailertable')
+  FEATURE(virtusertable, `hash -o /etc/mail/virtusertable')
+  FEATURE(access_db)
+  MAILER(local)
+  MAILER(smtp)
+  MAILER(ispmailgate)
 
-In what follows I assume that this file is stored as
-/etc/ispMailGateRecipients. Now we add the following section to
-sendmail.mc:
+=item /etc/mail2/sendmail.mc
 
-    define(`ISPMAILGATE_MAILER_PATH', `/usr/local/bin/ispMailGateD')
-    define(`ISPMAILGATE_MAILER_FLAGS', `fgmDFMu')
-    define(`ISPMAILGATE_MAILER_ARGS', `ispMailGateD $f $u')
+  divert(-1)
+  include(`/usr/lib/sendmail-cf/m4/cf.m4')
+  define(`confCW_FILE', `/etc/mail/sendmail.cw')
+  define(`ALIAS_FILE', `/etc/mail/aliases')
+  define(`QUEUE_DIR', `/var/spool/mqueue2')
+  define(`confDAEMON_OPTIONS', `port=26')
+  OSTYPE(`linux')
+  FEATURE(use_cw_file)
+  FEATURE(mailertable, `hash -o /etc/mail2/mailertable')
+  FEATURE(virtusertable, `hash -o /etc/mail/virtusertable')
+  FEATURE(access_db)
+  MAILER(local)
+  MAILER(smtp)
 
-    MAILER_DEFINITIONS
-    ##################################################
-    ###   IspMailGate Mailer specification         ###
-    ##################################################
+You see, this is almost the same file, with three exceptions:
 
-    Mispmailgate, P=ISPMAILGATE_MAILER_PATH, F=ISPMAILGATE_MAILER_FLAGS,
-	S=11/31, R=21/31, T=DNS/RFC822/X-Unix, A=ISPMAILGATE_MAILER_ARGS
+=over
 
-    LOCAL_CONFIG
-    KIMGR hash -o /etc/mail/ispMailGateRecipients
-    CPISPMAILGATE
+=item 1.)
 
-    LOCAL_RULE_0
-    # Make "user < @ host >" to "<user @ host > user < @ host . >"
-    R$* < @ $+ > $*			$: < $1 @ $2 > $1 < @ $2 > $3
-    # At this point we might have "< user @ host . > user < @ host . >"
-    # Remove the dot from the host part, if any.
-    R< $+ . > $* < $+ > $*		$: < $1 > $2 < $3 > $4
+The first sendmail is running on the default port 25, because it has
+no special port settings. The second sendmail is running on port 26.
 
-    # Is "user@host" in /etc/mail/ispMailGateRecipients?
-    R< $* @ $+ > $* < $+ > $*
-		$: < $1 @ $2 $(IMGR $1 @ $2 $: $) > $3 < $4 > $5
-    # Is "@host" in /etc/mail/ispMailGateRecipients?
-    R< $* @ $+ > $* < $+ > $*
-		$: < $1 @ $2 $(IMGR @ $2 $: $) > $3 < $4 > $5
-    # Is "host" = "@any.domain" with "domain" in
-    # /etc/mail/ispMailGateRecipients?
-    R< $* @ $+ . $+ > $* < $+ > $*
-		$: < $1 @ $2 . $3 $(IMGR . $3 $: $) > $4 < $5 > $6
-    # Did any of the last three rules match? If so, call IspMailGate
-    R< $* @ $+ : ispmailgate > $* < $+ > $*
-		$# ispmailgate $@ $2 $: $1 < @ $2 >
+=item 2.)
 
-    # Remove the preceding < user @ host >
-    R< $* @ $+ > $* < $+ > $*	$: $3 < $4 > $5
-    # Remove a .ISPMAILGATE, if present; call ruleset 3 for
-    # canonicalization
-    R$* < @ $+ .ISPMAILGATE. > $*	$: $>3 $1 @ $2
+The first sendmail is using F</etc/mail/mailertable>, the second has
+F</etc/mail2/mailertable>.
 
+=item 3.)
 
-If you do not know too much about sendmail.cf, you should at least note
-the following: In the above example we have typically three kinds of lines:
-Lines beginning with a '#' are comments. The LOCAL_CONFIG and LOCAL_RULE_0
-lines are m4 macros, the rest are so-called sendmail rules. These consist
-of a left hand and a right hand side (LHS and RHS), separated by tabs.
-If the lines become too long, you may use continutation lines, starting
-with a blank or tab. In the above example there are three rules using
-line continuation: The LHS is on the first line, the RHS (introduced with
-two tabs) is on the second line.
+The second sendmail doesn't have a mailer ispmailgate.
 
-But what does the above example mean? For understanding that, you have two
-know that sendmail starts with bringing the recipient address into a
-canonical form, looking like
+=item 4.)
 
-    user<@host> other information
+The first sendmail is using another spool directory, F</var/spool/mqueue2>.
+(I am not sure, whether this is required, however it doesn't harm, so let's
+be on the safe side.)
 
-The host part might have a trailing dot, so the above may indeed be
+=back
 
-    user<@host.> other information
+=item /etc/mail/mailertable
 
-So the first lines modify the above to
+  ispsoft.de	ispmailgate:ispsoft.de
 
-    <user@host>user<@host> other information
+=item /etc/mail2/mailertable
 
-or
+  ispsoft.de	ispmailgate:mail.ispsoft.de
 
-    <user@host>user<@host.> other information
+You see, the only difference between these two instances of mailertable
+is that the domain I<ispsoft.de> is treated different.
 
-The idea is that we work with the first part and may fall back to the
-original information by just dropping the part <user@host>.
+=back
 
-The three rules using the IMGR map verify whether "user@host" has a match
-in the recipient list of IspMailGate. If so, the RHS of the map in
-/etc/mail/ispMailGateRecipients is added and we receive
+Finally we have to execute some commands to get this configuration
+running:
 
-    <user@host:ispmailgate>user<@host.> other information
+	mkdir /var/spool/mqueue2
+	# The following should match the settings of
+	# /var/spool/mqueue exactly.
+	chown root /var/spool/mqueue2
+	chgrp root /var/spool/mqueue2
+	chmod 755 /var/spool/mqueue
 
-which will be sent to the ispmailgate mailer. Finally the first part is
-removed. But what does the last rule do?
+	cd /etc/mail
+	m4 sendmail.mc >sendmail.cf
+	makemap hash mailertable <mailertable
+	cd /etc/mail2
+	m4 sendmail.mc >sendmail.cf
+	makemap hash mailertable <mailertable
 
-When a mail is sent to IspMailGate, it may do something with the mail,
-but finally it is passed back to sendmail for true delivery. To avoid
-loops, we have to tell sendmail that the mail must not be processed by
-IspMailGate a second time. To achieve that we modify the recipient from
-user@host to user@host.ispmailgate. That guarantees, that the maps in
-/etc/mail/ispMailGateRecipients don't match thus we are guaranteed that
-the last rule of the above example will be applied finally. All it does
-is removing this .ispmailgate, if any. (Sometimes I agree, that
-sendmail configuration is a tedious thing ...)
+The above is fine for Linux. On other operating systems you might
+need to use GNU m4 rather than the builtin m4 and replace the map
+type I<hash> with I<dbm>. In particular this applies to Solaris.
+
+Finally, kill any running sendmail and start the new versions
+with
+
+	chmod 755 /etc/mail /etc/mail2
+	chmod 644 /etc/mail/sendmail.cf /etc/mail2/sendmail.cf
+	/usr/sbin/sendmail -C /etc/mail/sendmail.cf -bd -q1h
+	/usr/sbin/sendmail -C /etc/mail2/sendmail.cf -bd -q1h
+
+(The chmod commands because sendmail is I<really> picky about
+group writable files and directories.)
+
 
 =head1 CONFIGURATION FILE
 
@@ -785,58 +794,40 @@ The program depends on a local configuration file, read as the
 Mail::IspMailGate::Config module. In other words, this configuration file
 is pure Perl code defining certain variables under the name space
 Mail::IspMailGate::Config. The module is read from the file
-~LIBDIR~/Mail/IspMailGate/Config.pm.
+~installsitelib~/Mail/IspMailGate/Config.pm.
 
-The following variables are meaningfull to the program:
+The following variables are meaningful to the program:
 
 =over 4
 
-=item $VERSION
+=item VERSION
 
 The programs version; do not modify without a good reason.
 
-=item $PREFIX
-
-The installation prefix; typically the program files are stored in the
-directories $PREFIX/sbin, $PREFIX/lib, $PREFIX/man and so on. (Modifiable,
-see below.) The current prefix is ~PREFIX~.
-
-=item $LIBDIR
-
-The directory where the program's own perl modules are stored, currently
-~LIBDIR~.
-
-=item $SCRIPTDIR
-
-A directory for storing the executable Perl files, currently ~SCRIPTDIR~.
-
-=item $MANDIR
-
-The program's man pages are stored here, currently ~MANDIR~.
-
-=item $TMPDIR
+=item tmp_dir
 
 Set's the default directory for creating temporary files, currently
-~TMPDIR~. You can modify this with the C<--tmpdir> directive, see
+~tmp_dir~. You can modify this with the C<--tmpdir> directive, see
 above.
 
-=item $UNIXSOCK
+=item unix_sock
 
-The unix socket that the client connects to, currently ~UNIXSOCK~.
+The unix socket that the client connects to, currently ~unix_sock~.
 You can use the C<--unixsock> argument for overwriting the default.
 
-=item $PIDFILE
+=item pid_file
 
-The PID file where a running server stores its PID, currently ~PIDFILE~.
+The PID file where a running server stores its PID, currently ~pid_file~.
 You can use the C<--pidfile> argument for overwriting the default.
 
-=item $USER
+=item mail_user
 
-=item $GROUP
+=item mail_group
 
-IspMailGate is running as this user and group, ~USER~ and ~GROUP~.
+IspMailGate is running as this user and group, by default
+~mail_user~ and ~mail_group~.
 
-=item $MAILHOST
+=item mail_host
 
 The host to use for passing mails after processing them by the
 mail filter. By default 'localhost' is used, in other words, the
@@ -847,10 +838,11 @@ email addresses like user@domain.ispmailgate. For such addresses it
 must rip off the .ispmailgate and guarantee not to feed the mails
 back into ispMailGate. See L<SENDMAIL CONFIGURATION> below.
 
-=item @RECIPIENTS
+=item recipients
 
-A list of possible recipients/senders and filter lists that describe
-how to handle mails being sent from the senders to the recipients.
+An array ref with list of possible recipients/senders and filter lists
+that describe how to handle mails being sent from the senders to the
+recipients.
 
 Each element of the list is a hash ref with the following elements:
 
@@ -879,34 +871,27 @@ The recipient list will be read top to bottom, the first match decides
 which rule to choose. See the example configuration below for some
 example rules.
 
-=item @DEFAULT_FILTER
+=item default_filter
 
-If no element of the @RECIPIENTS list matches an emails senders and
+If no element of the recipients list matches an emails senders and
 recipients, the filters from this variable will be choosen. By default
-it contains a dummy filter.
+it contains a dummy filter:
 
-=item %PACKER
+  $cfg->{'default_filter'} = ['Mail::IspMailGate::Filter::Dummy'];
+
+=item packer
 
 This variable belongs to the Packer module. See
 L<Mail::IspMailGate::Packer(3)> for details.
 
-=item $VIRSCAN
+=item virscan
 
-=item %DEFLATER
+These belong to the VirScan module. See L<Mail::IspMailGate::VirScan(3)>
+for details.
 
-=item $HAS_VIRUS
+=item pgp
 
-These belong to the VirScan module. See L<Mail::IspMailGate::VirScan(3)>.
-
-=item $PGP_UID
-
-=item $PGP_UIDS
-
-=item $PGP_ENCRYPT_COMMAND
-
-=item $PCP_DECRYPT_COMMAND
-
-These belong to the PGP module. See L<Mail::IspMailGate::PGP(3)> for
+This variable belong to the PGP module. See L<Mail::IspMailGate::PGP(3)> for
 details.
 
 =back
@@ -916,124 +901,116 @@ details.
 
 It might help to look at a commented example of the configuration file:
 
-    # Yes, this is a module. Thus we have to introduce the file with
-    # forcing the modules namespace.
     package Mail::IspMailGate::Config;
 
-    # We load the modules here that will later be used for
-    # creating recipient lists.
-    require Mail::IspMailGate::Filter::Packer;
-    require Mail::IspMailGate::Filter::Dummy;
-    require Mail::IspMailGate::Filter::VirScan;
-    require Mail::IspMailGate::Filter::PGP;
-
-    # Directory settings and the like
-    $VERSION = '1.000';
-    $PREFIX = "/usr/local/IspMailGate-${VERSION}";
-    $LIBDIR = "${PREFIX}/lib";
-    $ETCDIR = "${PREFIX}/etc";
-    $SCRIPTDIR = "${PREFIX}/sbin";
-    $MANDIR = "${PREFIX}/man";
-    $TMPDIR = '/var/spool/IspMailgate';
-    $UNIXSOCK = '/var/run/ispMailGate.sock';
-    $PIDFILE = '/var/run/ispMailGate.pid';
-    $USER = 'daemon';
-    $GROUP = 'mail';
-    $MAILHOST = 'localhost';
-
-    #
-    # The packer module's configuration
-    #
-    %PACKER = ( 'gzip' => { 'pos' => '/bin/gzip -c',
-			    'neg' => '/bin/gzip -cd' } );
-
-
-    #
-    # The virus scanner's configuration
-    #
-    $VIRSCAN = '/usr/local/bin/virusx $ipaths';
-    @DEFLATER = ( { pattern => '\\.(tgz|tar\\.gz|tar\\.[zZ])$',
-                    cmd => '/bin/gzip -cd $ipath | /bin/tar -xf -C $odir'
-                  },
-                  { pattern => '\\.tar$',
-                    cmd => '/bin/tar -xf -C $odir'
-		  },
-	          { pattern => '\\.(gz|[zZ])$',
-                    cmd => '/bin/gzip -cd $ipath >$opath'
-                  },
-                  { pattern => '\\.zip$',
-                    cmd => '/usr/bin/unzip $ifile -d $odir'
-                  }
-                );
-
-    #
-    # sub which determines by a given string if a virus has been found.
-    # It returns a non-empty string if a virus has been found, else it
-    # returns ''
-    #
-    $HASVIRUS = sub ($) {
-        my($str) = @_;
-        if($str ne '') {
-	    return "Virus has been found: $str";
-        } else {
-	    return '';
+    $Mail::IspMailGate::Config::config = bless( {
+    # Config file version
+      'VERSION' => '1.100',
+    # Path of external virus scanner or empty
+      'antivir_path' => '/usr/bin/antivir',
+    # List of filters to use by default
+      'default_filter' => [
+        'Mail::IspMailGate::Filter::Dummy'
+      ],
+    # Facility to use for syslog
+      'facility' => 'mail',
+    # Path of the gzip binary (for extracting .gz files) or empty
+      'gzip_path' => '/usr/bin/gzip',
+    # Path of the LhA binary (for extracting .lha files) or empty
+      'lha_path' => '',
+    # GID under which sendmail is executing external binaries
+      'mail_group' => 'mail',
+    # Mail host (with optional :port) to use for final delivery
+      'mail_host' => 'localhost:26',
+    # UID under which sendmail is executing external binaries
+      'mail_user' => 'daemon',
+    # Configuration of the packer
+      'packer' => {
+        'gzip' => {
+          'neg' => '$gzip_path -cd',
+          'pos' => '$gzip_path -c'
         }
-    };
-
-
-    #
-    # The list of recpients; first match will be used. Any recipient not
-    # matching one of the elements will be filtered through the
-    # DEFAULT_FILTER.
-    #
-    @DEFAULT_FILTER = (Mail::IspMailGate::Filter::Dummy->new({}));
-
-    #
-    # Now the list of email senders/recipients that will handled by the
-    # filter.
-    #
-    my($pgp) = 'Mail::IspMailGate::Filter::PGP';
-    my($packer) = 'Mail::IspMailGate::Filter::Packer';
-    @RECIPIENTS = (
-        # Mail to hamburg.company.com (our branch in Hamburg, say)
-        # will be compressed with gzip and encrypted with PGP, key
-        # 'stuttgart.company.com'
-        { 'recipient' => '\\@muenchen\\.company\\.com$',
-          'filters' => [ $packer->new({'packer' => 'gzip',
-                                       'direction' => 'pos'}),
-                         $pgp->new({'uid' => 'stuttgart\\.company\\.com',
-                                    'direction' => 'pos'}) ]
-        },
-
-        # The departure in munich doesn't use IspMailGate, but all
-        # clients have AK-Mail installed. Mail to muenchen.company.com
-        # (our branch in munich, say) will be encrypted with PGP, user
-        # ID 'stuttgart.company.com'.
-        { 'recipient' => '\\@muenchen\\.company\\.com$',
-          'filters' => [ $pgp->new({'uid' => 'stuttgart\\.company\\.com',
-                                    'direction' => 'pos'}) ]
-        },
-
-        # Mail from muenchen.company.com or hamburg.company.com to
-        # stuttgart.company.com (incoming mail from the munich branch,
-        # say) will be decompressed and decrypted. Note we handle both
-        # sources with a single rule: The Packer module detects if a
-        # mail is not compressed.
-        { 'recipient' => '\\@stuttgart\\.company\\.com',
-          'sender'    => '\\@(muenchen|hamburg)\\.company\\.com',
-          'filters'   => [ $packer->new({'direction' => 'neg'}),
-                           $pgp->new({'direction' => 'neg'}) ]
-        },
-
-        # joe@ispsoft.de is a very special user. We send him an
-        # email bomb. (Filter to be being written. :-)
-        { 'recipient' => 'joe\\@ispsoft\\.de'
-          'filters'   => [ Mail::IspMailGate::Filter::Bomb->new({
-                               'file' => 'X11R6.tar.gz' }) ]
+      },
+    # PID file to use for the server
+      'pid_file' => '/var/run/ispmailgate.pid',
+    # E-Mail address of the administrator
+      'postmaster' => '[A',
+    # List of senders/recipients and associated filters
+      'recipients' => [
+        {
+          'filters' => [
+            'Mail::IspMailGate::Filter::VirScan'
+          ],
+          'recipient' => '[@\\.]ispsoft.de$'
         }
-    );
-
-    1;
+      ],
+    # Path of the tar binary (for extracting .tar files) or empty
+      'tar_path' => '/usr/bin/gtar',
+    # Directory to use for temporary files
+      'tmp_dir' => '/var/spool/ispmailgate',
+    # Path of the unarj binary (for extracting .arj files) or empty
+      'unarj_path' => '',
+    # Path of the Unix socket to connect to a server
+      'unix_sock' => '/var/run/ispmailgate.sock',
+    # Domain to assume for email adresses without @domain
+      'unqualified_domain' => 'ispsoft.de',
+    # Path of the unzip binary (for extracting .zip files) or empty
+      'unzip_path' => '/usr/bin/unzip',
+    # Configuration of the virus scanner
+      'virscan' => {
+        'scanner' => '$antivir_path -rs -nolnk -noboot $ipaths',
+        'deflater' => [
+          {
+            'cmd' => '$gzip_path -cd $ipath | $tar_path -xf -C $odir',
+            'pattern' => '\\.(?:tgz|tar\\.gz|tar\\.[zZ])$'
+          },
+          {
+            'cmd' => '$gzip_path -cd $ipath >$opath',
+            'pattern' => '\\.(?:gz|[zZ])$'
+          },
+          {
+            'cmd' => '$gzip_path -cd $ipath >$opath',
+            'pattern' => '\\.tar$'
+          },
+          {
+            'cmd' => '$unzip_path $ifile -d $odir',
+            'pattern' => '\\.zip$'
+          },
+          {
+            'cmd' => '$gzip_path -cd $ipath | $tar_path -xf -C $odir',
+            'pattern' => '\\.(?:tgz|tar\\.gz|tar\\.[zZ])$'
+          },
+          {
+            'cmd' => '$gzip_path -cd $ipath >$opath',
+            'pattern' => '\\.(?:gz|[zZ])$'
+          },
+          {
+            'cmd' => '$gzip_path -cd $ipath >$opath',
+            'pattern' => '\\.tar$'
+          },
+          {
+            'cmd' => '$unzip_path $ifile -d $odir',
+            'pattern' => '\\.zip$'
+          },
+          {
+            'cmd' => '$gzip_path -cd $ipath | $tar_path -xf -C $odir',
+            'pattern' => '\\.(?:tgz|tar\\.gz|tar\\.[zZ])$'
+          },
+          {
+            'cmd' => '$gzip_path -cd $ipath >$opath',
+            'pattern' => '\\.(?:gz|[zZ])$'
+          },
+          {
+            'cmd' => '$gzip_path -cd $ipath >$opath',
+            'pattern' => '\\.tar$'
+          },
+          {
+            'cmd' => '$unzip_path $ifile -d $odir',
+            'pattern' => '\\.zip$'
+          }
+        ]
+      },
+    }, 'Mail::IspMailGate::Install' );
 
 
 =head1 AUTHORS AND COPYRIGHT
@@ -1072,22 +1049,3 @@ L<MIME::Entity(3)>
 
 
 SCRIPT
-
-use lib "lib";
-
-require Config;
-require Mail::IspMailGate::Config;
-#$Mail::IspMailGate::Config::STARTPERL = $Config::Config{'startperl'} . " -wT";
-$Mail::IspMailGate::Config::STARTPERL = $Config::Config{'startperl'} . " -w";
-$script =~ s/\~(\w+)\~/${"Mail::IspMailGate::Config::" . $1}/eg;
-
-
-if (!open(FILE, ">ispMailGateD")) {
-    die "Cannot open ispMailGate for writing: $!";
-}
-
-
-
-if (!(print FILE $script)  ||  !close(FILE)) {
-    die "Error while writing $script: $!";
-}

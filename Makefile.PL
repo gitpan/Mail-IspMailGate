@@ -1,119 +1,103 @@
 # -*- perl -*-
 
 use strict;
-use ExtUtils::MakeMaker;
+require 5.005;
+use ExtUtils::MakeMaker ();
+use Getopt::Long ();
 
-my %prereq;
-sub CheckModule ($;$$) {
-    my($module, $version, $package) = @_;
-    $package ||= $module;
-    $prereq{$module} = $version || 0;
-    if ($version) {
-        print "Checking for $package, $version or later ... ";
-        eval "use $module $version";
-        if ($@) {
-            print("\nYou don't have installed the $package package,",
-                  " version $version or later.\n");
-            return 0;
-        }
-    } else {
-        print "Checking for $package ... ";
-        eval "use $module";
-        if ($@) {
-            print("\nYou don't have installed the $package package.\n");
-            return 0;
-        }
-    }
-    print "ok\n";
-    return 1;
-}
 
-my $ok = 1;
-$ok &&= CheckModule("MIME::Tools", 4.116);
-$ok &&= CheckModule("IO::Tee", 0.61);
-$ok &&= CheckModule("Sys::Syslog");
+sub Usage {
+    print <<"EOF";
+Usage: $0 <options>
 
-if (!$ok) {
-    print <<"MESSAGE";
+Possible options are:
 
-Missing modules are available from any CPAN mirror, for example
-        ftp://ftp.funet.fi/pub/languages/perl/CPAN/modules/by-module
+  --antivir-path=<p>    Set path of antivir binary; 'none' to disable
+  --debug		Turn on debugging mode
+  --facility=<f>	Set syslog facility
+  --gzip-path=<p>       Set path of gzip binary; 'none' to disable
+  --help		Print this message
+  --lha-path=<p>        Set path of unarj binary; 'none' to disable
+  --mail-user=<u>	Set UID under which sendmail executes external binaries
+  --mail-group=<g>	Set GID under which sendmail executes external binaries
+  --mail-host=<h>	Set host to use for delivering mails
+  --my-mail=<a>		Set email address being used in reports
+  --noprompt		Suppress prompting the user
+  --pid-file=<p>        Set path of PID file
+  --php-path=<p>        Set path of pgp binary; 'none' to disable
+  --sendmail-path=<p>   Set path of sendmail binary; 'none' to disable
+  --tar-path=<p>	Set path of tar binary; 'none' to disable
+  --tmp-dir=<p>		Set path of spool directory
+  --unarj-path=<p>      Set path of unarj binary; 'none' to disable
+  --unix-sock=<p>       Set path of unix socket
+  --domain=<d>          Set domain being added to unqualified email adresses
+  --unzip-path=<p>      Set path of unzip binary; 'none' to disable
+  --verbose		Turn on verbose mode
 
-MESSAGE
+See "perldoc ExtUtils::MakeMaker" for generic options.
+EOF
     exit 1;
 }
 
+
+use vars qw($debug $verbose $prompt);
+$prompt = 1;
+Getopt::Long::Configure('pass_through');
+Getopt::Long::GetOptions('debug' => \$debug, 'verbose' => \$verbose,
+			 'prompt!' => \$prompt, 'help' => \&Usage);
+
+
+my %prereq =
+    ( "IO::Scalar" => 1.113,
+      "MIME::Tools" => 4.116,
+      "IO::Tee" => 0.61
+    );
+
+
 use lib "lib";
-require Mail::IspMailGate::Config;
+# Create a config file. Make sure this is successfull, so that we
+# get a Makefile anyways. This is required by the automatic CPAN
+# installation.
+
+my $cfg = eval {
+    require Mail::IspMailGate::Install;
+    $Mail::IspMailGate::Install::config = 1;
+    Mail::IspMailGate::Install->Config();
+};
 
 
-my($unixSock) = $Mail::IspMailGate::Config::UNIXSOCK;
+my $unixSock = $cfg ? $cfg->{'unix_sock'} : '';
 
 
-my %opts =
-    ('PREFIX' => $Mail::IspMailGate::Config::PREFIX,
-     'LIB' => $Mail::IspMailGate::Config::LIBDIR,
-     'INSTALLSCRIPT' => $Mail::IspMailGate::Config::SCRIPTDIR,
-     'INSTALLBIN' => $Mail::IspMailGate::Config::SCRIPTDIR,
-     'INSTALLMAN1DIR' => "$Mail::IspMailGate::Config::MANDIR/man1",
-     'INSTALLMAN3DIR' => "$Mail::IspMailGate::Config::MANDIR/man3",
-     'NAME' => 'Mail::IspMailGate',
+ExtUtils::MakeMaker::WriteMakefile
+    ('NAME' => 'Mail::IspMailGate',
      'EXE_FILES' => ['ispMailGateD'],
-     'VERSION_FROM' => 'lib/Mail/IspMailGate/Config.pm',
+     'VERSION_FROM' => 'lib/Mail/IspMailGate/Install.pm',
      'dist'         => { 'SUFFIX'       => ".gz",
 			 'DIST_DEFAULT' => 'all tardist',
 			 'COMPRESS'     => "gzip -9vf" },
      'clean'        => { 'FILES'        => 'output ispMailGate ispMailGateD' },
-     'DEFINE'       => "-DPATH_UNIXSOCK=\\\"$unixSock\\\"",
+     'DEFINE'       => $unixSock ? q{-DPATH_UNIXSOCK=\"}.$unixSock.q{\"} : "",
      'INC'          => '-I$(PERL_INC)',
-     'linkext'      => {'LINKTYPE'     => ''}
-     );
-
-if ($ExtUtils::MakeMaker::VERSION >= 5.43) {
-    $opts{'ABSTRACT'} = "A general purpose filtering MDA for sendmail";
-    $opts{'AUTHOR'} = 'Amar Subramanian (subraman@informatik.uni-tuebingen.de) and Jochen Wiedmann (joe@ispsoft.de)';
-    $opts{'PREREQ_PM'} = \%prereq;
-}
-
-WriteMakefile(%opts);
+     'linkext'      => {'LINKTYPE'     => ''},
+     'ABSTRACT'     => "A general purpose filtering MDA for sendmail",
+     'AUTHOR'       => 'Jochen Wiedmann <joe@ispsoft.de>',
+     'PREREQ_PM'    => \%prereq
+    );
 
 
 package MY;
 
 sub postamble {
-    "pm_to_blib: README\n\n"
-    . "README: ispMailGateD\n"
-    . "\tperldoc -t ispMailGateD >README\n\n"
-#    . "ispMailGate: ispMailGate.o \$(INST_BIN)/.exists\n"
-#    . "\t\$(LD) \$(LDFLAGS) -o ispMailGate ispMailGate.o\n\n"
-#    . "\$(INST_BIN)/ispMailGate: ispMailGate\n\n"
-#    . "\t\@rm -f \$(INST_BIN)/ispMailGate\n"
-#    . "\tcp ispMailGate \$(INST_BIN)/ispMailGate\n\n"
-#    . "ispMailGate.o: lib/Mail/IspMailGate/Config.pm\n\n"
-	;
+    qq{
+
+all :: README\n\nREADME: ispMailGateD
+\tperldoc -t ispMailGateD >README
+
+install ::
+\t\$(PERL) -I\$(PERL_ARCHLIB) -I\$(PERL_LIB) -MMail::IspMailGate::Install -e Install
+};
 }
-
-# sub installbin {
-#     my($self) = shift;
-#     my($str) = "\n\$(INST_BIN)/.exists :: \$(PERL_INC)/perl.h\n"
-# 	. "\t\@\$(MKPATH) \$(INST_BIN)\n"
-# 	. "\t\@\$(EQUALIZE_TIMESTAMP) \$(PERL_INC)/perl.h \$(INST_BIN)/.exists\n\n"
-# 	. $self->SUPER::installbin();
-#     $str =~ s/(all ::.*)/$1 \$(INST_BIN)\/ispMailGate/m;
-#     $str;
-# }
-
-sub constants {
-    my($self) = shift;
-    my($str) = $self->SUPER::constants();
-    my($scriptDir) = $Mail::IspMailGate::Config::SCRIPTDIR;
-    $str =~ s/^(INSTALLBIN *= *).*/$1$scriptDir/m;
-    $str =~ s/^(INSTALLSCRIPT *= *).*/$1$scriptDir/m;
-    $str;
-}
-
-
-package MY;
 
 sub libscan {
     my($self, $path) = @_;

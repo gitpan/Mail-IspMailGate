@@ -107,6 +107,6 @@ it and/or modify it under the same terms as Perl itself.
 
 =head1 VERSION
 
-$Revision: 1.1.1.1 $ $Date: 1999/02/22 11:08:56 $
+$Revision: 1.1.1.1 $ $Date: 1999/09/12 13:05:51 $
 
 =cut

@@ -49,9 +49,10 @@ dnl
 #
 
 divert(-1)
+define(`confDAEMON_OPTIONS', `Port=26')
 include(`/usr/lib/sendmail-cf/m4/cf.m4')
 define(`confDEF_USER_ID',``8:12'')
-define(`confCW_FILE', `/etc/mail/sendmail.cw')
+define(`confCW_FILE', `/etc/mail2/sendmail.cw')
 define(`ALIAS_FILE', `/etc/mail/aliases')
 OSTYPE(`linux')
 undefine(`UUCP_RELAY')
@@ -59,9 +60,8 @@ undefine(`BITNET_RELAY')
 FEATURE(always_add_domain)
 FEATURE(use_cw_file)
 FEATURE(local_procmail)
-FEATURE(mailertable, hash -o /etc/mail/mailertable)
+FEATURE(mailertable, hash -o /etc/mail/mailertable2)
 FEATURE(access_db)
 MAILER(procmail)
 MAILER(smtp)
-MAILER(ispmailgate)
 

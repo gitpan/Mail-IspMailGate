@@ -25,10 +25,9 @@ sub getSign { "X-ispMailGate-PGP"; };
 #
 #   Inputs:   $self   - This class
 #             $entity - the whole message
-#                       
 #
 #   Returns:  1 if it must be, else 0
-#    
+#
 #####################################################################
 
 sub mustFilter ($$) {
@@ -69,15 +68,15 @@ sub mustFilter ($$) {
 #                       1. 'body'
 #                       2. 'parser'
 #                       3. 'head'
-#                       4. 'globHead' 
+#                       4. 'globHead'
 #
 #   Returns:  error message, if any
-#    
+#
 #####################################################################
 
 sub filterFile ($$) {
     my ($self, $attr) = @_;
-    
+
     my ($ret);
     if($ret = $self->SUPER::filterFile($attr)) {
 	return $ret;
@@ -133,15 +132,16 @@ sub hookFilter ($$) {
 sub new ($$) {
     my($class, $attr) = @_;
     my($self) = $class->SUPER::new($attr);
+    my $cfg = $Mail::IspMailGate::Config::config;
     if ($self) {
 	if (!exists($self->{'uid'})) {
-	    $self->{'uid'} = $Mail::IspMailGate::Config::PGP_UID;
+	    $self->{'uid'} = $cfg->{'pgp'}->{'uid'};
 	}
 	if (!exists($self->{'passPhrases'})) {
-	    $self->{'passPhrases'} = $Mail::IspMailGate::Config::PGP_UIDS;
+	    $self->{'passPhrases'} = $cfg->{'pgp'}->{'uids'};
 	}
     }
-    
+
     $self;
 }
 
@@ -284,7 +284,7 @@ you have to enter values for the following variables:
 
 =over 4
 
-=item $PGP_UID
+=item $cfg->{'pgp'}->{'uid'}
 
 This is the default user ID for encrypting emails. (You might override
 it with the C<uid> attribute of the Mail::IspMailGate::Filter::PGP
@@ -292,7 +292,7 @@ objects, see below.) Example:
 
     $PGP_UID = 'FooBar Inc. <info@foobar.com>';
 
-=item $PGP_UIDS
+=item $cfg->{'pgp'}->{'uids'}
 
 This is a hash ref of user ID's that you want to encrypt automatically.
 The hash keys are the user ID's, the hash values are the respective
@@ -302,20 +302,22 @@ pass phrases. Example:
         'FooBar Inc. <info@foobar.com>' => 'foobar'
     };
 
-=item $PGP_ENCRYPT_COMMAND
+=item $cfg->{'pgp'}->{'encrypt_command'}
 
 A command template for encrypting messages. Example:
 
-    $PGP_ENCRYPT_COMMAND = '/usr/bin/pgp -fea $uid +verbose=0';
+    $cfg->{'pgp'}->{'encrypt_command'} =
+        '/usr/bin/pgp -fea $uid +verbose=0';
 
 Note the use of single quotes to prevent expansion of the variable
 $uid. This variable will be expanded my the MIME::Decoder module.
 
-=item $PGP_DECRYPT_COMMAND
+=item $cfg->{'pgp'}->{'decrypt_command'}
 
 Likewise for decryption. Example:
 
-    $PGP_DECRYPT_COMMAND = '/usr/bin/pgp -f +verbose=0';
+    $cfg->{'pgp'}->{'decrypt_command'} =
+        '/usr/bin/pgp -f +verbose=0';
 
 You might miss a variable $pass or something sililar here, as
 decryption requires a pass phrase. Pgp has no command line option

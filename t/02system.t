@@ -1,13 +1,11 @@
 # -*- perl -*-
 
-use Mail::IspMailGate::Config;
+use Mail::IspMailGate::Config ();
 
 
 print "1..2\n";
 
-
-my $tmpdir = $Mail::IspMailGate::Config::TMPDIR
-           = $Mail::IspMailGate::Config::TMPDIR; # -w
+my $tmpdir = $Mail::IspMailGate::Config::config->{'tmp_dir'};
 if (-d $tmpdir) {
     print "ok 1\n";
 } else {
@@ -16,15 +14,26 @@ if (-d $tmpdir) {
     print "not ok 1\n";
 }
 
-my $filename = "testaaaa";
-while (-d "$tmpdir/$filename") {
-    ++$filename;
+my $cfile = "lib/Mail/IspMailGate/Config.pm";
+my $uid = $Mail::IspMailGate::Config::config->{'mail_user'};
+if ($uid !~ /^\d+$/) {
+    $uid = getpwnam($uid)
+	or die "Cannot determine UID of $uid, check mail_user in $cfile";
 }
-if (open(FILE, ">$tmpdir/$filename")) {
+my $gid = $Mail::IspMailGate::Config::config->{'mail_group'};
+if ($gid !~ /^\d+$/) {
+    $gid = getgrnam($gid)
+	or die "Cannot determine GID of $gid, check mail_group in $cfile";
+}
+
+$) = $( = $gid;
+$> = $< = $uid;
+if ($> != $uid  ||  $) != $gid) {
+    die "Failed to get UID/GID $uid/$gid, have $>/$). You must run me as root.\n";
+}
+if (-w $tmpdir) {
     print "ok 2\n";
-    close(FILE);
-    unlink "$tmpdir/$filename";
 } else {
-    print STDERR ("Cannot create a file in $tmpdir, check permissions.\n");
+    print STDERR "Cannot create a file in $tmpdir, check permissions.\n";
     print "not ok 2\n";
 }

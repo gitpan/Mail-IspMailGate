@@ -21,14 +21,14 @@ sub getSign { "X-ispMailGate-Packer"; };
 #
 #   Inputs:   $self   - This class
 #             $entity - the whole message
-#                       
 #
 #   Returns:  1 if it must be, else 0
-#    
+#
 #####################################################################
 
 sub mustFilter ($$) {
     my($self, $entity) = @_;
+    my $cfg = $Mail::IspMailGate::Config::config;
 
     if (!$self->SUPER::mustFilter($entity)) {
 	return 0;
@@ -38,11 +38,9 @@ sub mustFilter ($$) {
     my($direction) = $self->{'recDirection'};
     my($head) = $entity->head();
     if ($direction eq 'neg') {
-	my($prevPack) = $head->mime_attr('X-IspMailGate-Packer-Type');
-	if (!defined($prevPack)) {
-	    $prevPack = '';
-	}
-	if(exists($Mail::IspMailGate::Config::PACKER{$prevPack})) {
+	my $prevPack = $head->mime_attr('X-IspMailGate-Packer-Type');
+	$prevPack = '' unless defined $prevPack;
+	if(exists($cfg->{'packer'}->{$prevPack})) {
 	    $packer=$prevPack;
 	} else {
 	    return 0;
@@ -61,13 +59,12 @@ sub mustFilter ($$) {
 #   Name:     hookFilter
 #
 #   Purpse:   a function which is called after the filtering process
-#             
+#
 #   Inputs:   $self   - This class
 #             $entity - the whole message
-#                       
 #
 #   Returns:  errormessage if any
-#    
+#
 #####################################################################
 
 sub hookFilter ($$) {
@@ -100,39 +97,39 @@ sub hookFilter ($$) {
 #                       1. 'body'
 #                       2. 'parser'
 #                       3. 'head'
-#                       4. 'globHead' 
+#                       4. 'globHead'
 #
 #   Returns:  error message, if any
-#    
+#
 #####################################################################
 
 sub filterFile ($$$) {
     my ($self, $attr) = @_;
-    
+    my $cfg = $Mail::IspMailGate::Config::config;
+
     my ($ret) = 0;
     if($ret = $self->SUPER::filterFile($attr)) {
 	return $ret;
     }
-    my ($head) = $attr->{'head'};
-    my ($body) = $attr->{'body'};
-    my ($parser) = $attr->{'parser'};
-    my ($globHead) = $attr->{'globHead'};
-    my ($ifile) = $body->path();
-    my ($ofile) = $parser->output_path($head);
-    my ($packer) = $self->{'recPacker'};
-    my ($direction) = $self->{'recDirection'};
-    my ($sign) = '';
+    my $head = $attr->{'head'};
+    my $body = $attr->{'body'};
+    my $parser = $attr->{'parser'};
+    my $globHead = $attr->{'globHead'};
+    my $ifile = $body->path();
+    my $ofile = $parser->output_path($head);
+    my $packer = $self->{'recPacker'};
+    my $direction = $self->{'recDirection'};
+    my $sign = '';
 
     if((!defined($packer)) || (!defined($direction))) {
 	return "Invalid invoke";
     }
-    my ($cmd);
-    $cmd = $Mail::IspMailGate::Config::PACKER{$packer}->{$direction};
+    return "Unknown packer: $packer"
+	unless exists($cfg->{'packer'}->{$packer});
+    my $cmd = $cfg->{'packer'}->{$packer}->{$direction};
+    $cmd =~ s/\$(\w+)/$cfg->{$1}/g;
 
-    if (!exists($Mail::IspMailGate::Config::PACKER{$packer})) {
-	return "Unknown packer: $packer";
-    }
-    if ($ret=system("$cmd $ifile >$ofile")) {
+    if ($ret=system("$cmd " . quotemeta($ifile) . " >" . quotemeta($ofile))) {
 	return $ret;
     } else {
 	$body->path($ofile);
@@ -149,11 +146,11 @@ sub filterFile ($$$) {
 #
 #   Inputs:   $self   - This class
 #             $attr   - the attributes
-#                       'head' 
+#                       'head'
 #                       'direction'
 #
 #   Returns:  error message, if any
-#    
+#
 #####################################################################
 
 sub setEncoding ($$$) {
@@ -244,18 +241,20 @@ Mail::IspMailGate::Filter::Packer  - Compressing emails
 
 =head1 DESCRIPTION
 
-This class is the Packer (compressing emails) derived from 
-L<Mail::IspMailGate::Filter> (refer to the manpage). 
+This class is the Packer (compressing emails) derived from
+L<Mail::IspMailGate::Filter> (refer to the manpage).
 You can specify the attribute 'direction' with the constructor, so you can
 force to act only in one direction: 'pos' only compressing and 'neg' only for
-decompressing. If you specify no direction it will be guessed in the function 
+decompressing. If you specify no direction it will be guessed in the function
 I<mustFilter>. If the message
 has never been Filter by Packer it chooses 'pos', else it checks in which direction
 this has happened and chooses the opposite. You can also specify the attribute 'packer'
-in the constructor to set the comressor type for direction 'pos'. 
-The supported packer are configured in I<%Mail::IspMailGate::Config::PACKER> in each
+in the constructor to set the comressor type for direction 'pos'.
+The supported packer are configured in I<$cfg->{'packer'}> in each
 direction with a template for the I<system()> command.
-It overrides the function I<filterFile>, I<mustFilter>, I<hookFile> and I<getSign>. 
+It overrides the function I<filterFile>, I<mustFilter>, I<hookFile> and
+I<getSign>.
+
 
 =head1 PUBLIC INTERFACE
 

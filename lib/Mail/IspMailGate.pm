@@ -1,6 +1,6 @@
 # -*- perl -*-
 
-require 5.004;
+require 5.005;
 use strict;
 
 use IO::File ();
@@ -13,7 +13,7 @@ use File::Path ();
 
 package Mail::IspMailGate;
 
-$Mail::IspMailGate::VERSION = '0.1004';
+$Mail::IspMailGate::VERSION = '1.100';
 
 
 package Mail::IspMailGate::SMTP;
@@ -61,12 +61,9 @@ package Mail::IspMailGate;
 
 sub Debug ($$;@) {
     my($self, $fmt, @args) = @_;
-    if ($self->{'debug'}) {
-	&Sys::Syslog::syslog('debug', $fmt, @args);
-	if ($self->{'stderr'}) {
-	    printf("$fmt\n", @args);
-	}
-    }
+    return unless $self->{'debug'};
+    &Sys::Syslog::syslog('debug', $fmt, @args);
+    printf STDERR ("$fmt\n", @args) if ($self->{'stderr'});
 }
 
 sub Error ($$;@) {
@@ -94,11 +91,17 @@ sub Fatal ($$;@) {
 #
 ############################################################################
 
+sub TmpDir {
+    my $self = shift;
+    return $self->{'tmpDir'} if exists $self->{'tmpDir'};
+    $self->{'tmpDir'} = $Mail::IspMailGate::Config::config->{'tmp_dir'};
+}
+
 sub GetUniqueId ($) {
     # XXX: use attrs 'locked';
     my $self = shift;
 
-    my $idFile = $Mail::IspMailGate::Config::TMPDIR . "/.id";
+    my $idFile = $self->TmpDir() . "/.id";
 
     # Generate a unique ID for this mail
     my $fh = Symbol::gensym();
@@ -137,6 +140,7 @@ sub GetUniqueId ($) {
 
 sub SendMimeMail ($$$$$) {
     my($self, $entity, $sender, $recipients, $host) = @_;
+    my $cfg = $Mail::IspMailGate::Config::config;
 
     if ($self->{'noMails'}) {
 	if (ref($self->{'noMails'}) eq 'SCALAR') {
@@ -147,7 +151,7 @@ sub SendMimeMail ($$$$$) {
 	return;
     }
 
-    my $mailHost = $Mail::IspMailGate::Config::MAILHOST;
+    my $mailHost = $cfg->{'mail_host'};
     my $addIspMailGate = 1;
     if ($host) {
 	$addIspMailGate = 0;
@@ -159,6 +163,10 @@ sub SendMimeMail ($$$$$) {
 	$self->Fatal("Failed to connect to mail server $mailHost: $!");
     }
     #$smtp->debug(1);
+    my $msender = $sender;
+    if ($msender !~ /\@/  &&  $cfg->{'unqualified_domain'}) {
+	$msender .= $cfg->{'unqualified_domain'};
+    }
     if (!$smtp->mail($sender)) {
 	$self->Fatal("Failed to pass sender to mail server $mailHost: $!");
     }
@@ -202,7 +210,8 @@ sub SendMimeMail ($$$$$) {
 sub SendBackupFile ($$$$$$) {
     my($self, $id, $ifh, $fileName, $sender, $recipients) = @_;
 
-    my($mailHost) = $Mail::IspMailGate::Config::MAILHOST;
+    my $cfg = $Mail::IspMailGate::Config::config;
+    my $mailHost = $cfg->{'mail_host'};
 
     if (!$ifh->seek(0, 0)) {
 	$self->Fatal("Failed to rewind backup file $fileName: $!");
@@ -251,7 +260,7 @@ sub SendBackupFile ($$$$$$) {
 	$self->Fatal("Failed to read from backup file $fileName: $!");
     }
 
-    my($keepDir) = $Mail::IspMailGate::Config::TMPDIR . "/keep";
+    my($keepDir) = $self->TmpDir() . "/keep";
     my($keepFile) = $keepDir . "/mail$id";
     if (! -d $keepDir  &&  ! mkdir $keepDir, 0770) {
 	$self->Fatal("Failed to create directory $keepDir: $!");
@@ -262,7 +271,7 @@ sub SendBackupFile ($$$$$$) {
     }
 
     $smtp->mail($sender)  &&
-    $smtp->to($Mail::IspMailGate::Config::POSTMASTER)  &&
+    $smtp->to($cfg->{'postmaster'})  &&
     $smtp->data()  &&
     $smtp->datasend("Failed to parse mail, kept in $keepFile\n")  &&
     $smtp->dataend()  &&
@@ -304,20 +313,36 @@ sub _CanonicAddress($) {
 
 sub MakeFilterList ($$) {
     my($self, $sender, $recipient) = @_;
+    my $cfg = $Mail::IspMailGate::Config::config;
 
     $sender = _CanonicAddress($sender);
     $recipient = _CanonicAddress($recipient);
 
+    my $filters;
+
     my($r);
-    foreach $r (@Mail::IspMailGate::Config::RECIPIENTS) {
+    foreach $r (@{$cfg->{'recipients'}}) {
 	my($rec) = $r->{'recipient'};
 	my($sen) = $r->{'sender'};
 	if ((!$rec  ||  $recipient =~ /$rec/)  &&
 	    (!$sen  ||  $sender =~ /$sen/)) {
-	    return @{$r->{'filters'}};
+	    $filters = $r->{'filters'};
+	    last;
 	}
     }
-    return @Mail::IspMailGate::Config::DEFAULT_FILTER;
+    $filters ||= $cfg->{'default_filter'};
+
+    map {
+	if (!ref($_)) {
+	    my $proto = $_;
+	    my $c = "$_.pm";
+	    $c =~ s/\:\:/\//g;
+	    require $c;
+	    $proto->new({});
+	} else {
+	    $_
+	}
+    } @$filters;
 }
 
 
@@ -339,12 +364,11 @@ sub MakeFilterList ($$) {
 sub Main($$$$) {
     my($self, $infh, $sender, $recipients, $host) = @_;
     my $id = $self->GetUniqueId();
-    my($tmpDir) = (exists($self->{'tmpDir'}) ?
-	$self->{'tmpDir'} : $Mail::IspMailGate::Config::TMPDIR) . "/$id";
-    my($backupFile) = $self->{'backupFile'}  =
-	$Mail::IspMailGate::Config::TMPDIR . "/mail$id";
+    my $td = $self->TmpDir();
+    my $tmpDir = $self->{'tmpDir'} = "$td/$id";
+    my($backupFile) = $self->{'backupFile'}  = "$td/mail$id";
+    my $cfg = $Mail::IspMailGate::Config::config;
 
-    $self->{'tmpDir'} = $tmpDir;
     if (! -d $tmpDir  &&  !mkdir $tmpDir, 0770) {
 	$self->Fatal("Error while creating directory $tmpDir");
     }
@@ -388,8 +412,8 @@ sub Main($$$$) {
     #
     #   For any recipient: Build his filter list
     #
-    my($r, @rFilters);
-    foreach $r (@$recipients) {
+    my @rFilters;
+    foreach my $r (@$recipients) {
 	$self->Debug("Making filter list for recipient $r");
 	my(@filters) = $self->MakeFilterList($sender, $r);
 	push(@rFilters, [$r, $entity, @filters]);
@@ -406,41 +430,58 @@ sub Main($$$$) {
     #   that we call any filter only once, regardless of the number
     #   of recipients.
     #
-    my($done);
+    my $done;
     do {
 	$done = 1;
 	my($eOrig, $fOrig, $eNew, @rList);
 	undef $eOrig;
-	foreach $r (@rFilters) {
+	foreach my $r (@rFilters) {
 	    if (@$r > 2) {
 		if (!$eOrig) {
 		    $eOrig = $r->[1];
 		    $fOrig = $r->[2];
-		    $self->Debug("Filtering entity %s for recipient %s via Filter %s", $eOrig, $r->[0], $fOrig);
+		    $self->Debug("Filtering entity %s for recipient %s via"
+				 . " Filter %s", $eOrig, $r->[0], $fOrig);
 		    $eNew = $eOrig->dup();
-		    $@ = '';
-		    my($msg) = eval { $fOrig->doFilter({'entity' => $eNew,
-							'parser' => $parser,
-						        'main' => $self });
+		    my $msg = eval { $fOrig->doFilter({'entity' => $eNew,
+						       'parser' => $parser,
+						       'main' => $self });
 				  };
-		    if ($@) {
-			$self->Fatal($@);
-		    }
+		    $self->Fatal($@) if $@;
 		    if (length($msg)) {
-			$self->Debug("Filter result: Entity $eNew, message $msg");
-			my($ePart) = MIME::Entity->build('Type' => 'text/plain',
-							 'Data' => [ $msg ]);
-			$self->Debug("Adding part: $ePart");
-			$self->Debug("Array of parts before adding: " . ($eNew->parts()));
-			$eNew->add_part($ePart, 0);
-			$self->Debug("Array of parts after adding: " . ($eNew->parts()));
+			# The filter returned an error. Let the postmaster
+			# know about it.
+			$eNew = MIME::Entity->build
+			    ('Type' => 'multipart/mixed',
+			     'From' => $cfg->{'my-mail'},
+			     'To' => $cfg->{'postmaster'},
+			     'Reply-To' => join(",", $sender, @rList),
+			     'Subject' => 'IspMailGate error report'
+			    );
+			$eNew->attach
+			    ('Data' =>
+			     [ "An error occurred while processing the",
+			       " attached mail. The error\n",
+			       "message is:\n",
+			       "\n",
+			       $msg,
+			       "\n",
+			       "This report was created by IspMailGate,",
+			       " version $cfg->{'VERSION'}.\n"
+			     ]);
+			$eOrig->mime_type("message/rfc822") unless
+			    $eOrig->mime_type();
+			$eNew->add_part($eOrig);
+			$sender = $cfg->{'my-mail'};
+			@rList = $cfg->{'postmaster'};
+			last;
 		    }
 		    $done = 0;
 		}
 		if ($r->[1] eq $eOrig  &&  $fOrig->IsEq($r->[2])) {
 		    $r->[1] = $eNew;
 		    splice(@$r, 2, 1);
-		    $self->Debug("Replacing entity %s for recipient %s with %s",
+		    $self->Debug("Replacing entity %s, recipient %s with %s",
 				 $eOrig, $r->[0], $eNew);
 		    if (@$r == 2) {
 			# No more filters, send this mail

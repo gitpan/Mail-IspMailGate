@@ -88,17 +88,17 @@ sub MiParse ($$$;$$) {
 sub MiMail ($@) {
     my $name = shift;
     my $opts = MiInit(@_);
+    my $cfg = $Mail::IspMailGate::Config::config;
     my $tmpdir = $opts->{'tmp_dir'}  ||  'output/tmp';
     if ($tmpdir) {
-	$Mail::IspMailGate::Config::TMPDIR =
-	    $Mail::IspMailGate::Config::TMPDIR = $tmpdir; # -w
+	$cfg->{'tmp_dir'} = $tmpdir;
 	if (!-d $tmpdir) {
-	    mkdir $tmpdir, 0755;
+	    require File::Path;
+	    File::Path::mkpath($tmpdir, 0, 0755)
 	}
     }
     if ($opts->{'recipients'}) {
-	@Mail::IspMailGate::Config::RECIPIENTS =
-	    @Mail::IspMailGate::Config::RECIPIENTS = @{$opts->{'recipients'}};
+	$cfg->{'recipients'} = [@{$opts->{'recipients'}}];
     }
 
     require Sys::Syslog;
