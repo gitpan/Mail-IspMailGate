@@ -177,6 +177,7 @@ sub Main ($$$$) {
     my($pidFile) = $Mail::IspMailGate::Config::PIDFILE;
     my($tmpDir);
     my($from, $noMails, $noFork);
+    my @args = @ARGV;
 
     while ($arg = shift @ARGV) {
 	if ($arg eq '-s'  ||  $arg eq '-server'  ||  $arg eq '--server') {
@@ -184,11 +185,13 @@ sub Main ($$$$) {
 	} elsif ($arg eq '-u'  ||  $arg eq '-unixsock'
 		 ||  $arg eq '--unixsock') {
 	    if (!defined($unixSock = shift @ARGV)) {
+		print "Option --unixsock without argument.\n";
 		Usage();
 	    }
 	} elsif ($arg eq '-a'  ||  $arg eq '-facility'
 		 ||  $arg eq '--facility') {
 	    if (!defined($facility = shift @ARGV)) {
+		print "Option --facility without argument.\n";
 		Usage();
 	    }
 	} elsif ($arg eq '-n'  ||  $arg eq '-nomails'
@@ -199,15 +202,18 @@ sub Main ($$$$) {
 	} elsif ($arg eq '-p'  ||  $arg eq '-pidfile'
 		 ||  $arg eq '--pidfile') {
 	    if (!defined($pidFile = shift @ARGV)) {
+		print "Option --pidfile without argument.\n";
 		Usage();
 	    }
 	} elsif ($arg eq '-p'  ||  $arg eq '-tmpdir'
 		 ||  $arg eq '--tmpdir') {
 	    if (!defined($tmpDir = shift @ARGV)) {
+		print "Option --tmpdir without argument.\n";
 		Usage();
 	    }
 	} elsif ($arg eq '-f'  ||  $arg eq '-from'  ||  $arg eq '--from') {
 	    if (!defined($from = shift @ARGV)) {
+		print "Option --from without argument.\n";
 		Usage();
 	    }
 	} elsif ($arg eq '-d'  ||  $arg eq '-debug'  ||  $arg eq '--debug') {
@@ -217,8 +223,13 @@ sub Main ($$$$) {
 	}
     }
 
-    if (($daemon && (@recipients || $from))  ||
-	(!$daemon  &&  (!@recipients || !$from))) {
+    if ($daemon && (@recipients || $from)) {
+	print("Option --server is not compatible with --from or recipient",
+	      " lists.\n");
+	Usage();
+    }
+    if (!$daemon  &&  !@recipients) {
+	print("Missing recipients.\n");
 	Usage();
     }
 
@@ -255,6 +266,9 @@ sub Main ($$$$) {
 	$( = $gid;
 	$> = $uid;
 	$< = $uid;
+	if ($debugging) {
+	    Sys::Syslog::syslog('debug', "Command line arguments: " . join(" ", @args));
+	}
 	Main(\*STDIN, $from, \@recipients, $attr);
 	exit(0);
     }

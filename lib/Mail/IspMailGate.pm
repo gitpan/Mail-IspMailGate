@@ -11,6 +11,11 @@ require Sys::Syslog;
 require File::Path;
 
 
+package Mail::IspMailGate;
+
+$Mail::IspMailGate::VERSION = '0.1001';
+
+
 package Mail::IspMailGate::SMTP;
 
 # Simple wrapper for Net::SMTP to make it usable for
@@ -91,41 +96,25 @@ sub Fatal ($$;@) {
 
 sub GetUniqueId ($) {
     # XXX: use attrs 'locked';
-    my($self) = @_;
+    my $self = shift;
 
-    my($idFile) = $Mail::IspMailGate::Config::TMPDIR . "/.id";
+    my $idFile = $Mail::IspMailGate::Config::TMPDIR . "/.id";
 
     # Generate a unique ID for this mail
-    my($fh) = IO::File->new($idFile, "a+");
-    if (!$fh) {
-	$self->Fatal("Cannot open lock file $idFile: $!");
-    }
-    if (!flock($fh, 2)) {
-	$self->Fatal("Cannot lock file $idFile: $!");
-    }
-    if (!$fh->seek(0, 0)) {
-	$self->Fatal("Cannot seek to beginning of file $idFile: $!");
-    }
-
-    my($line) = $fh->getline();
-    my($id);
-    if ($line && $line =~ /(\d+)/) {
-	$id = $1;
-    } else {
-	$id = 0;
-    }
-    if (++$id < 0) {
-	$id = 1;
-    }
-    if (!$fh->seek(0, 0)) {
-	$self->Fatal("Error while seeking to top of lock file $idFile: $!");
-    }
-    if (!$fh->printf("%d\n", $id)) {
-	$self->Fatal("Error while writing lock file $idFile: $!");
-    }
-    if (!$fh->close()) {
-	$self->Fatal("Error while closing lock file $idFile: $!");
-    }
+    my $fh = Symbol::gensym();
+    sysopen($fh, $idFile, Fcntl::O_RDWR()|Fcntl::O_CREAT())
+	or  $self->Fatal("Cannot open lock file $idFile: $!");
+    flock($fh, 2)  or  $self->Fatal("Cannot lock file $idFile: $!");
+    my $id = <$fh>;
+    if (!defined($id)) { $id = 0 }
+    if (++$id < 0) {  $id = 1 }
+    seek($fh, 0, 0)
+	or $self->Fatal("Error while seeking to top of lock file $idFile: $!");
+    truncate($fh, 0)
+	or $self->Fatal("Error while truncating lock file $idFile: $!");
+    printf $fh ("%d\n", $id)
+	or  $self->Fatal("Error while writing lock file $idFile: $!");
+    close($fh)  or  $self->Fatal("Error while closing lock file $idFile: $!");
     $id;
 }
 
@@ -163,7 +152,7 @@ sub SendMimeMail ($$$$) {
     if (!$smtp) {
 	$self->Fatal("Failed to connect to mail server $mailHost: $!");
     }
-    $smtp->debug(1);
+    #$smtp->debug(1);
     if (!$smtp->mail($sender)) {
 	$self->Fatal("Failed to pass sender to mail server $mailHost: $!");
     }
@@ -249,9 +238,8 @@ sub SendBackupFile ($$$$$$) {
 	    $self->Fatal("Failed to send data to mail server $mailHost: $!");
 	}
     }
-    if (!$smtp->dataend()  ||  !$smtp->quit()) {
-	$self->Fatal("Failed to terminate connection to mail server"
-		     . " $mailHost: $!");
+    if (!$smtp->dataend()) {
+	$self->Fatal("Failed to end data on $mailHost: $!");
     }
     if ($ifh->error()  ||  !$ifh->close()) {
 	$self->Fatal("Failed to read from backup file $fileName: $!");
@@ -266,8 +254,13 @@ sub SendBackupFile ($$$$$$) {
 	$self->Fatal("Failed to rename backup file $fileName as",
 		     " $keepFile: $!");
     }
-    SendMail($Mail::IspMailGate::Config::POSTMASTER,
-	     "Failed to parse mail, kept in $keepFile\n");
+
+    $smtp->mail($sender)  &&
+    $smtp->to($Mail::IspMailGate::Config::POSTMASTER)  &&
+    $smtp->data()  &&
+    $smtp->datasend("Failed to parse mail, kept in $keepFile\n")  &&
+    $smtp->dataend()  &&
+    $smtp->quit();
     exit 0;
 }
 
@@ -338,30 +331,42 @@ sub MakeFilterList ($$) {
 
 sub Main($$$$) {
     my($self, $infh, $sender, $recipients) = @_;
-    my($id) = $self->GetUniqueId();
-    my($tmpDir) = exists($self->{'tmpDir'}) ?
-	$self->{'tmpDir'} : $Mail::IspMailGate::Config::TMPDIR . "/$id";
-    my($backupFile) = $Mail::IspMailGate::Config::TMPDIR . "/mail$id";
-
-    $self->Debug("Received mail from $sender");
+    my $id = $self->GetUniqueId();
+    my($tmpDir) = (exists($self->{'tmpDir'}) ?
+	$self->{'tmpDir'} : $Mail::IspMailGate::Config::TMPDIR) . "/$id";
+    my($backupFile) = $self->{'backupFile'}  =
+	$Mail::IspMailGate::Config::TMPDIR . "/mail$id";
 
     $self->{'tmpDir'} = $tmpDir;
-    if (! -d $tmpDir  &&  !mkdir $tmpDir, 0660) {
+    if (! -d $tmpDir  &&  !mkdir $tmpDir, 0770) {
 	$self->Fatal("Error while creating directory $tmpDir");
     }
-
     $self->Debug("Using tmpdir $tmpDir");
 
     # Create a new parser and let it read a mail from STDIN.
-    my($ofh) = IO::File->new($backupFile, "w");
+    my($ofh) = IO::File->new($backupFile, "w+");
     if (!$ofh) {
 	$self->Fatal("Error while creating backup file $backupFile: $!");
     }
+
     my($ifh) = IO::Tee->new($infh, $ofh);
     if (!$ifh) {
 	$self->Fatal("Error while creating input file handle: $!");
     }
     $self->Debug("Using backup file $backupFile");
+
+    if (!$sender) {
+	if (defined(my $line = $ifh->getline())) {
+	    if ($line =~ /^\s*from\s+(\S+)\s+/i) {
+		$sender = $1;
+	    } else {
+		$self->Fatal("Cannot parse From line: $line\n");
+	    }
+	} else {
+	    $self->Fatal("Failed to read From line from mail: $!");
+	}
+    }
+    $self->Debug("Received mail from $sender");
 
     $@ = '';
     my($parser, $entity);
@@ -370,7 +375,7 @@ sub Main($$$$) {
 	$entity = $parser->read($ifh);
     };
     if ($@ || !$entity) {
-	$self->SendBackupFile($id, $ifh, $backupFile, $sender, $recipients);
+	$self->SendBackupFile($id, $ofh, $backupFile, $sender, $recipients);
     }
 
     #
@@ -474,6 +479,10 @@ sub DESTROY ($) {
     if ($self->{'tmpDir'}) {
 	$self->Debug("Removing directory %s", $self->{'tmpDir'});
 	&File::Path::rmtree($self->{'tmpDir'});
+    }
+    if ( $self->{'backupFile'}   ) {
+	$self->Debug("Removing backup file %s",  $self->{'backupFile'}  );
+	unlink  $self->{'backupFile'}  ;
     }
 }
 

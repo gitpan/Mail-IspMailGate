@@ -88,7 +88,15 @@ print (($entity ? "" : "not "), "ok 3\n");
 
 
 my($str) = $entity->as_string();
-my($fh) = IO::Scalar->new(\$str);
+
+if (!open(OUT, ">output/21mp.in")  ||  !(print OUT $str)  ||  !close(OUT)) {
+    die "Error while creating input file 'output/21mp.in': $!";
+}
+require Symbol;
+my $fh = Symbol::gensym();
+if (!open($fh, "<output/21mp.in")) {
+    die "Error while opening input file 'output/21mp.in': $!";
+}
 my($str2) = '';
 my($parser) = Mail::IspMailGate->new({'debug' => 1,
 				      'tmpDir' => 'output/tmp',
@@ -99,7 +107,13 @@ $parser->Main($fh, 'joe@ispsoft.de', ['joe-packer-in@ispsoft.de']);
 undef $fh;
 print "ok 5\n";
 
-$fh = IO::Scalar->new(\$str2);
+if (!open(OUT, ">output/21mp.tmp")  ||  !(print OUT $str)  ||  !close(OUT)) {
+    die "Error while creating input file 'output/21mp.tmp': $!";
+}
+$fh = Symbol::gensym();
+if (!open($fh, "<output/21mp.tmp")) {
+    die "Error while opening input file 'output/21mp.tmp': $!";
+}
 my($str3) = '';
 $parser->{'noMails'} = \$str3;
 $parser->Main($fh, 'joe@ispsoft.de', ['joe-packer-out@ispsoft.de']);
@@ -110,15 +124,7 @@ if ($str eq $str3) {
     print "ok 7\n";
 } else {
     print "not ok 7\n";
-    if (open(OUT, ">output/21mail-packer.input")) {
-	print OUT $str;
-	close(OUT);
-    }
-    if (open(OUT, ">output/21mail-packer.packed")) {
-	print OUT $str2;
-	close(OUT);
-    }
-    if (open(OUT, ">output/21mail-packer.output")) {
+    if (open(OUT, ">output/21mp.out")) {
 	print OUT $str3;
 	close(OUT);
     }

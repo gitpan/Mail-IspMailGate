@@ -6,6 +6,7 @@
 
 use strict;
 
+require Symbol;
 require MIME::Entity;
 require Mail::IspMailGate;
 require Mail::IspMailGate::Filter;
@@ -56,7 +57,13 @@ my($filter) = Mail::IspMailGate::Filter::Dummy->new({});
 print (($filter ? "" : "not "), "ok 2\n");
 
 my($str) = $entity->as_string();
-my($fh) = IO::Scalar->new(\$str);
+if (!open(OUT, ">output/20md.in")  ||  !(print OUT $str)  ||  !close(OUT)) {
+    die "Error while creating input file 'output/20md.in': $!";
+}
+my $fh = Symbol::gensym();
+if (!open($fh, "<output/20md.in")) {
+    die "Error while opening input file 'output/20md.in': $!";
+}
 my($str2) = '';
 my($parser) = Mail::IspMailGate->new({'debug' => 1,
 				      'tmpDir' => 'output/tmp',
@@ -69,11 +76,7 @@ if ($str eq $str2) {
     print "ok 4\n";
 } else {
     print "not ok 4\n";
-    if (open(OUT, ">output/20mail-dummy.input")) {
-	print OUT $str;
-	close(OUT);
-    }
-    if (open(OUT, ">output/20mail-dummy.output")) {
+    if (open(OUT, ">output/20md.out")) {
 	print OUT $str2;
 	close(OUT);
     }

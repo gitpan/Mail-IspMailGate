@@ -15,12 +15,11 @@ $Mail::IspMailGate::Parser::VERSION = '0.01';
 @Mail::IspMailGate::Parser::ISA = qw(MIME::Parser);
 
 sub new ($$) {
-    my($class, $attr) = @_;
-    my($self) = $class->SUPER::new
-	( 'output_dir' => $Mail::IspMailGate::Config::TMPDIR,
-	  'output_prefix' => 'part',
-	  'output_to_core' => 'NONE');
-    $self;
+    my $class = shift;  my %attr = @_;
+    $attr{'output_dir'} ||= $Mail::IspMailGate::Config::TMPDIR;
+    $attr{'output_prefix'} ||= 'part';
+    $attr{'output_to_core'} ||= 'NONE';
+    $class->SUPER::new(%attr);
 }
 
 sub output_path ($$) {

@@ -5,6 +5,22 @@
 
 use strict;
 
+# Find antivir
+my $antivir;
+{
+    my $dir;
+    foreach $dir (split(/:/, $ENV{'PATH'})) {
+	if (!defined($antivir)  &&  -x "$dir/antivir") {
+	    $antivir = "$dir/antivir";
+	}
+    }
+    if (!defined($antivir)) {
+	print "1..0\n";
+	exit 0;
+    }
+}
+
+
 require Symbol;
 require MIME::Entity;
 require Mail::IspMailGate;
@@ -18,7 +34,7 @@ sub VScan ($$$) {
     my($input) = $entity->as_string();
     my $fh = Symbol::gensym();
     ++$numFiles;
-    my $fname = "output/22mv$numFiles.in";
+    my $fname = "output/24ma$numFiles.in";
     if (!open($fh, ">$fname")  ||  !(print $fh $input)  ||  !close($fh)) {
 	die "Error while creating input file $fname: $!";
     }
@@ -33,18 +49,18 @@ sub VScan ($$$) {
 					  'tmpDir' => 'output/tmp',
 					  'noMails' => \$output});
     $parser->Main($fh, 'joe@ispsoft.de', ['joe-virscan@ispsoft.de']);
-    if ($output =~ /Virus has been found/) {
+    if ($output =~ /\!Virus\!/) {
 	print (($expect ? "" : "not "), "ok $num\n");
     } else {
 	print (($expect ? "not " : ""), "ok $num\n");
     }
-    if (open($fh, ">output/22mv$numFiles.out")) {
+    if (open($fh, ">output/24ma$numFiles.out")) {
         print $fh $output;
     }
 }
 
 
-&Sys::Syslog::openlog('22mail-virscan.t', 'pid,cons', 'daemon');
+&Sys::Syslog::openlog('24mail-antivir.t', 'pid,cons', 'daemon');
 eval { Sys::Syslog::setlogsock('unix'); };
 
 
@@ -85,18 +101,16 @@ if (! -d "output") {
 
 
 $Mail::IspMailGate::Config::TMPDIR =
-    $Mail::IspMailGate::Config::TMPDIR = "output/tmp";
+    $Mail::IspMailGate::Config::TMPDIR = "output/tmp"; # -w
 $Mail::IspMailGate::Config::VIRSCAN = 
-    $Mail::IspMailGate::Config::VIRSCAN = 't/virscan $ipaths'; # Make -w happy
+    $Mail::IspMailGate::Config::VIRSCAN = $antivir . ' -rs $ipaths';
 $Mail::IspMailGate::Config::HASVIRUS =
     $Mail::IspMailGate::Config::HASVIRUS = sub ($) {
     my($str) = @_;
-    if(defined($str) && $str ne '') {
-        return "Virus has been found: $str";
-    } else {
-        return '';
-    }             
+    my $result = join('\n', grep { $_ =~ /\!Virus\!/ } split(/\n/, $str));
+    $result ? "$result\n" : '';
 };
+
 if (defined($extension)) {
     @Mail::IspMailGate::Config::DEFLATER =
 	@Mail::IspMailGate::Config::DEFLATER = (
@@ -136,8 +150,8 @@ print (($entity ? "" : "not "), "ok 2\n");
 VScan($entity, 0, 3);
 
 my($entity2) = $entity->dup();
-$entity2->attach('Path' => 't/virscan',
-		 'Type' => 'text/plain',
+$entity2->attach('Path' => 't/eicar.com',
+		 'Type' => 'application/x-dos-binary',
 		 'Encoding' => 'base64');
 VScan($entity2, 1, 4);
 

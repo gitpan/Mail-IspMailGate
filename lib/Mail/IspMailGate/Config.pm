@@ -6,22 +6,25 @@ package Mail::IspMailGate::Config;
 require 5.004;
 
 require Mail::IspMailGate::Filter;
-require Mail::IspMailGate::Filter::Packer;
+require Mail::IspMailGate::Filter::Banner;
 require Mail::IspMailGate::Filter::Dummy;
 require Mail::IspMailGate::Filter::VirScan;
 
-$VERSION = '1.000';
+
+$VERSION = '1.001';
 $PREFIX = "/usr/local/IspMailGate-${VERSION}";
 $LIBDIR = "${PREFIX}/lib";
 $ETCDIR = "${PREFIX}/etc";
 $SCRIPTDIR = "${PREFIX}/sbin";
 $MANDIR = "${PREFIX}/man";
-$TMPDIR = '/var/spool/IspMailgate';
+$TMPDIR = '/var/spool/ispmailgate';
 $UNIXSOCK = '/var/run/ispMailGate.sock';
 $PIDFILE = '/var/run/ispMailGate.pid';
 $FACILITY = 'mail';
 $USER = 'daemon';
 $GROUP = 'mail';
+$POSTMASTER = 'root@ispsoft.de';
+
 
 #
 # the configuration of the packer
@@ -33,7 +36,7 @@ $GROUP = 'mail';
 #
 # configuration for the virus-scanner
 #
-$VIRSCAN = 't/virscan $ipaths';
+$VIRSCAN = '/usr/bin/antivir -rs $ipaths';
 @DEFLATER = ( { pattern => '\\.(tgz|tar\\.gz|tar\\.[zZ])$',
                 cmd => '/bin/gzip -cd $ipath | /bin/tar -xf -C $odir'
                 },
@@ -45,7 +48,10 @@ $VIRSCAN = 't/virscan $ipaths';
                 },
               { pattern => '\\.zip$',
                 cmd => '/usr/bin/unzip $ifile -d $odir'
-                }
+                },
+	      { pattern => '\\.(lha|lzx)$',
+                cmd => '/usr/bin/lha $ifile w=$odir'
+                }     
 );
 
 
@@ -55,13 +61,11 @@ $VIRSCAN = 't/virscan $ipaths';
 # returns ''
 #
 $HASVIRUS = sub ($) {
-    my($str) = @_;
-    if($str ne '') {
-	return "Virus has been found: $str";
-    } else {
-	return '';
-    }
+    my $str = shift;
+    my $result = join('\n', grep { $_ =~ /\!Virus\!/ } split(/\n/, $str));
+    $result ? "Alert: A Virus has been detected:\n\n$result\n" : '';
 };
+
 
 
 $MAILHOST = 'localhost';
@@ -74,14 +78,12 @@ $MAILHOST = 'localhost';
 @DEFAULT_FILTER = (Mail::IspMailGate::Filter::Dummy->new({}));
 
 @RECIPIENTS =
-    ({ 'recipient' => 'joe-packer\\@laptop\\.ispsoft\\.de',
-       'filters' => [ Mail::IspMailGate::Filter::Packer->new({'packer' => 'gzip'}) ] },
-     { 'recipient' => 'joe-depacker\\@laptop\\.ispsoft\\.de',
-       'filters' => [ Mail::IspMailGate::Filter::Packer->new({'packer' => 'gzip', 'direction' => 'neg'}) ] },
-     { 'recipient' => 'joe-virok\\@laptop\\.ispsoft\\.de',
-       'filters' => [ Mail::IspMailGate::Filter::VirScan->new({}) ] },
-     { 'recipient' => 'joe-virfound\\@laptop\\.ispsoft\\.de',
-       'filters' => [ Mail::IspMailGate::Filter::VirScan->new({}) ] },
-     );
+    ( { 'recipient' => '[@\.]ispsoft\.de$',
+        'filters' => [ Mail::IspMailGate::Filter::VirScan->new({}) ] },
+      { 'sender' => '[@\.]ispsoft.de$',
+	'filters' => [ Mail::IspMailGate::Filter::Banner->new
+		          ({'plain' => '/etc/mail/banner.plain',
+			    'html' => '/etc/mail/banner.html'}) ] }
+	     );
 
 1;
