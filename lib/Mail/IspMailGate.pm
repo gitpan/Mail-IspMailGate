@@ -184,6 +184,9 @@ sub SendMimeMail ($$$$$) {
     if (!$entity->print($smtp)) {
 	$self->Fatal("Failed to write mail to mail server $mailHost");
     }
+    if (!$smtp->dataend()) {
+	$self->Fatal("Failed to terminate data connection: $!");
+    }
 }
 
 
@@ -253,7 +256,7 @@ sub SendBackupFile ($$$$$$) {
 	    $self->Fatal("Failed to send data to mail server $mailHost: $!");
 	}
     }
-    if (!$smtp->dataend()) {
+    if (!$smtp->dataend()  ||  !$smtp->quit()) {
 	$self->Fatal("Failed to end data on $mailHost: $!");
     }
     if ($ifh->error()  ||  !$ifh->close()) {
@@ -528,10 +531,10 @@ sub DESTROY ($) {
 	$self->Debug("Removing directory %s", $self->{'tmpDir'});
 	&File::Path::rmtree($self->{'tmpDir'});
     }
-    if ( $self->{'backupFile'}   ) {
-	$self->Debug("Removing backup file %s",  $self->{'backupFile'}  );
-	unlink  $self->{'backupFile'}  ;
-    }
+#      if ( $self->{'backupFile'}   ) {
+#  	$self->Debug("Removing backup file %s",  $self->{'backupFile'}  );
+#  	unlink  $self->{'backupFile'}  ;
+#      }
 }
 
 1;
