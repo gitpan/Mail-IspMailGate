@@ -51,7 +51,7 @@ package Mail::IspMailGate::Install;
 
 use vars qw($VERSION @ISA @EXPORT $config);
 
-$VERSION = '1.100';
+$VERSION = '1.1011';
 @ISA = qw(Exporter);
 @EXPORT = qw(Install);
 
@@ -262,7 +262,8 @@ sub new {
     if ($cfg->{'gzip_path'}) {
 	push(@{$cfg->{'virscan'}->{'deflater'}},
 	     { pattern => '\\.(?:gz|[zZ])$',
-	       cmd => '$gzip_path -cd $ipath >$opath'
+	       cmd => '$gzip_path -cd $ipath >$opath',
+	       extension => '\\.(?:.*?)'
 	     });
     }
     if ($cfg->{'tar_path'}) {

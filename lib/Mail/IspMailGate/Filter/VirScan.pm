@@ -163,6 +163,9 @@ sub checkArchive ($$$$) {
 		    'ifile' => File::Basename::basename($ipath),
 		    'odir'  => $self->createDir($attr));
     $patterns{'ofile'} = $patterns{'ifile'};
+    if ($deflater->{'extension'}) {
+	$patterns{'ofile'} =~ s/$deflater->{'extension'}$//;
+    }
     $patterns{'opath'} = File::Spec->catfile($patterns{'odir'},
 					     $patterns{'ofile'});
     my $cmd = $deflater->{'cmd'};
