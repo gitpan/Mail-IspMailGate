@@ -1,0 +1,480 @@
+# -*- perl -*-
+
+require 5.004;
+use strict;
+
+require IO::File;
+require IO::Tee;
+require Mail::IspMailGate::Parser;
+require Net::SMTP;
+require Sys::Syslog;
+require File::Path;
+
+
+package Mail::IspMailGate::SMTP;
+
+# Simple wrapper for Net::SMTP to make it usable for
+# MIME::Entity->print()
+#
+# This relies on the assumption that the MIME-tools use only
+# print() for output purposes!
+#
+@Mail::IspMailGate::SMTP::ISA = qw(Net::SMTP);
+
+sub print {
+    my($self) = shift;
+    foreach (@_) {
+	if (!$self->datasend($_)) {
+	    return undef;
+	}
+    }
+    return 1;
+}
+
+
+package Mail::IspMailGate;
+
+
+############################################################################
+#
+#   Name:    Debug (Instance method)
+#            Error (Instance method)
+#            Fatal (Instance method)
+#
+#   Purpose: Create logfile entries with different severity levels.
+#            The Debug method supresses output, unless the 'debug'
+#            attribute is set. The Fatal method terminates the
+#            current thread after logging the message.
+#
+#   Inputs:  $self - This instance
+#            $fmt - printf-like format string
+#            @args - arguments
+#
+#   Result:  Nothing
+#
+############################################################################
+
+sub Debug ($$;@) {
+    my($self, $fmt, @args) = @_;
+    if ($self->{'debug'}) {
+	&Sys::Syslog::syslog('debug', $fmt, @args);
+	if ($self->{'stderr'}) {
+	    printf("$fmt\n", @args);
+	}
+    }
+}
+
+sub Error ($$;@) {
+    my($self, $fmt, @args) = @_;
+    &Sys::Syslog::syslog('err',  $fmt, @args);
+    printf STDERR ("$fmt\n", @args);
+}
+
+sub Fatal ($$;@) {
+    my($self, $fmt, @args) = @_;
+    Error($self, $fmt, @args);
+    exit 1;
+}
+
+
+############################################################################
+#
+#   Name:    GetUniqueId (Instance method)
+#
+#   Purpose: Returns a unique ID for this mail
+#
+#   Inputs:  $self - This instance
+#
+#   Returns: ID (decimal)
+#
+############################################################################
+
+sub GetUniqueId ($) {
+    # XXX: use attrs 'locked';
+    my($self) = @_;
+
+    my($idFile) = $Mail::IspMailGate::Config::TMPDIR . "/.id";
+
+    # Generate a unique ID for this mail
+    my($fh) = IO::File->new($idFile, "a+");
+    if (!$fh) {
+	$self->Fatal("Cannot open lock file $idFile: $!");
+    }
+    if (!flock($fh, 2)) {
+	$self->Fatal("Cannot lock file $idFile: $!");
+    }
+    if (!$fh->seek(0, 0)) {
+	$self->Fatal("Cannot seek to beginning of file $idFile: $!");
+    }
+
+    my($line) = $fh->getline();
+    my($id);
+    if ($line && $line =~ /(\d+)/) {
+	$id = $1;
+    } else {
+	$id = 0;
+    }
+    if (++$id < 0) {
+	$id = 1;
+    }
+    if (!$fh->seek(0, 0)) {
+	$self->Fatal("Error while seeking to top of lock file $idFile: $!");
+    }
+    if (!$fh->printf("%d\n", $id)) {
+	$self->Fatal("Error while writing lock file $idFile: $!");
+    }
+    if (!$fh->close()) {
+	$self->Fatal("Error while closing lock file $idFile: $!");
+    }
+    $id;
+}
+
+
+############################################################################
+#
+#   Name:    SendMimeMail (Instance method)
+#
+#   Purpose: Send a MIME entity
+#
+#   Inputs:  $self - This instance
+#            $entity - MIME entity to send
+#            $sender - Mail sender
+#            $recipients - List of recipients
+#
+#   Returns: Nothing
+#
+############################################################################
+
+sub SendMimeMail ($$$$) {
+    my($self, $entity, $sender, $recipients) = @_;
+
+    if ($self->{'noMails'}) {
+	if (ref($self->{'noMails'}) eq 'SCALAR') {
+	    ${$self->{'noMails'}} .= $entity->stringify();
+        } else {
+	    $entity->print(\*STDOUT);
+	}
+	return;
+    }
+
+    my($mailHost) = $Mail::IspMailGate::Config::MAILHOST;
+
+    my($smtp) = Mail::IspMailGate::SMTP->new($mailHost);
+    if (!$smtp) {
+	$self->Fatal("Failed to connect to mail server $mailHost: $!");
+    }
+    $smtp->debug(1);
+    if (!$smtp->mail($sender)) {
+	$self->Fatal("Failed to pass sender to mail server $mailHost: $!");
+    }
+    my($r);
+    foreach $r (@$recipients) {
+	if (!$smtp->to($r . ".ispmailgate")) {
+	    $self->Fatal("Failed to pass recipient $r to mail server"
+			 . " $mailHost: $!");
+	}
+    }
+    if (!$smtp->data()) {
+	$self->Fatal("Failed to request data mode from mail server"
+		     . " $mailHost: $!");
+    }
+    if (!$entity->print($smtp)) {
+	$self->Fatal("Failed to write mail to mail server $mailHost");
+    }
+}
+
+
+############################################################################
+#
+#   Name:    SendBackupFile (Instance method)
+#
+#   Purpose: If something went wrong while parsing the mail, we do the
+#            following: Move the mail to a folder where it will be
+#            saved, send it to the recipients and tell the postmaster
+#            about the problem.
+#
+#   Inputs:  $self - This instance
+#            $id - Mail id
+#            $ifh - Backup file's file handle
+#            $fileName - Backup file's file name
+#            $sender - Sender's email address
+#            $recipients - Recipient list
+#
+#   Returns: Nothing, exits
+#
+############################################################################
+
+sub SendBackupFile ($$$$$$) {
+    my($self, $id, $ifh, $fileName, $sender, $recipients) = @_;
+
+    my($mailHost) = $Mail::IspMailGate::Config::MAILHOST;
+
+    if (!$ifh->seek(0, 0)) {
+	$self->Fatal("Failed to rewind backup file $fileName: $!");
+    }
+
+    if ($self->{'noMails'}) {
+	my($line);
+	while (defined($line = $ifh->getline())) {
+	    if (ref($self->{'noMails'}) eq 'SCALAR') {
+		${$self->{'noMails'}} .= $line;
+	    } else {
+	        print $line;
+	    }
+	}
+	exit 0;
+    }
+
+    my($smtp) = Net::SMTP->new($mailHost);
+    if (!$smtp) {
+	$self->Fatal("Failed to connect to mail server $mailHost: $!");
+    }
+    if (!$smtp->mail($sender)) {
+	$self->Fatal("Failed to pass sender to mail server $mailHost: $!");
+    }
+    my($r);
+    foreach $r (@$recipients) {
+	if (!$smtp->to($r . ".ispmailgate")) {
+	    $self->Fatal("Failed to pass recipient $r to mail server"
+			 . " $mailHost: $!");
+	}
+    }
+    if (!$smtp->data()) {
+	$self->Fatal("Failed to request data mode from mail server"
+		     . " $mailHost: $!");
+    }
+    my($line);
+    while (defined($line = $ifh->getline())) {
+	if (!$smtp->datasend($line)) {
+	    $self->Fatal("Failed to send data to mail server $mailHost: $!");
+	}
+    }
+    if (!$smtp->dataend()  ||  !$smtp->quit()) {
+	$self->Fatal("Failed to terminate connection to mail server"
+		     . " $mailHost: $!");
+    }
+    if ($ifh->error()  ||  !$ifh->close()) {
+	$self->Fatal("Failed to read from backup file $fileName: $!");
+    }
+
+    my($keepDir) = $Mail::IspMailGate::Config::TMPDIR . "/keep";
+    my($keepFile) = $keepDir . "/mail$id";
+    if (! -d $keepDir  &&  ! mkdir $keepDir, 0770) {
+	$self->Fatal("Failed to create directory $keepDir: $!");
+    }
+    if (!rename $fileName, $keepFile) {
+	$self->Fatal("Failed to rename backup file $fileName as",
+		     " $keepFile: $!");
+    }
+    SendMail($Mail::IspMailGate::Config::POSTMASTER,
+	     "Failed to parse mail, kept in $keepFile\n");
+    exit 0;
+}
+
+
+############################################################################
+#
+#   Name:    MakeFilterList (Instance method)
+#
+#   Purpose: Given a recipient, find the list of filters to apply for
+#            him.
+#
+#   Inputs:  $self - This instance
+#            $sender
+#            $recipient
+#
+#   Returns: List of filter instances
+#
+############################################################################
+
+#
+#   Sender and Recipient may be "Joe User <joe.user@my.domain>" or
+#   "joe.user@my.domain (Joe User)"
+#
+sub _CanonicAddress($) {
+    my($address) = @_;
+    $address =~ s/^\s+//;
+    $address =~ s/\s+$//;
+    if ($address =~ /\<(.*)\>/) {
+	$address = $1;
+    } elsif ($address =~ /(.*?)\s*\(.*\)/) {
+	$address = $1;
+    }
+    $address;
+}
+
+sub MakeFilterList ($$) {
+    my($self, $sender, $recipient) = @_;
+
+    $sender = _CanonicAddress($sender);
+    $recipient = _CanonicAddress($recipient);
+
+    my($r);
+    foreach $r (@Mail::IspMailGate::Config::RECIPIENTS) {
+	my($rec) = $r->{'recipient'};
+	my($sen) = $r->{'sender'};
+	if ((!$rec  ||  $recipient =~ /$rec/)  &&
+	    (!$sen  ||  $sender =~ /$sen/)) {
+	    return @{$r->{'filters'}};
+	}
+    }
+    return @Mail::IspMailGate::Config::DEFAULT_FILTER;
+}
+
+
+############################################################################
+#
+#   Name:    Main (Instance method)
+#
+#   Purpose: Process a single mail.
+#
+#   Inputs:  $self - This instance
+#            $sender - Mail sender
+#            $recipients - Array ref to list of recipients
+#
+#   Returns: Nothing; exits in case of error
+#
+############################################################################
+
+sub Main($$$$) {
+    my($self, $infh, $sender, $recipients) = @_;
+    my($id) = $self->GetUniqueId();
+    my($tmpDir) = exists($self->{'tmpDir'}) ?
+	$self->{'tmpDir'} : $Mail::IspMailGate::Config::TMPDIR . "/$id";
+    my($backupFile) = $Mail::IspMailGate::Config::TMPDIR . "/mail$id";
+
+    $self->Debug("Received mail from $sender");
+
+    $self->{'tmpDir'} = $tmpDir;
+    if (! -d $tmpDir  &&  !mkdir $tmpDir, 0660) {
+	$self->Fatal("Error while creating directory $tmpDir");
+    }
+
+    $self->Debug("Using tmpdir $tmpDir");
+
+    # Create a new parser and let it read a mail from STDIN.
+    my($ofh) = IO::File->new($backupFile, "w");
+    if (!$ofh) {
+	$self->Fatal("Error while creating backup file $backupFile: $!");
+    }
+    my($ifh) = IO::Tee->new($infh, $ofh);
+    if (!$ifh) {
+	$self->Fatal("Error while creating input file handle: $!");
+    }
+    $self->Debug("Using backup file $backupFile");
+
+    $@ = '';
+    my($parser, $entity);
+    eval {
+	$parser = Mail::IspMailGate::Parser->new('output_dir' => $tmpDir);
+	$entity = $parser->read($ifh);
+    };
+    if ($@ || !$entity) {
+	$self->SendBackupFile($id, $ifh, $backupFile, $sender, $recipients);
+    }
+
+    #
+    #   For any recipient: Build his filter list
+    #
+    my($r, @rFilters);
+    foreach $r (@$recipients) {
+	$self->Debug("Making filter list for recipient $r");
+	my(@filters) = $self->MakeFilterList($sender, $r);
+	push(@rFilters, [$r, $entity, @filters]);
+	$self->Debug("Filter list is: @filters");
+    }
+
+    #
+    #   As long as there are filters in the filter lists: Find the
+    #   first recipient with a filter. Pipe his entity into the filter.
+    #   Replace his entity and that of all recipients with the same
+    #   entity and filter with the result.
+    #
+    #   This is somewhat complicated, but this way we are guaranteed,
+    #   that we call any filter only once, regardless of the number
+    #   of recipients.
+    #
+    my($done);
+    do {
+	$done = 1;
+	my($eOrig, $fOrig, $eNew, @rList);
+	undef $eOrig;
+	foreach $r (@rFilters) {
+	    if (@$r > 2) {
+		if (!$eOrig) {
+		    $eOrig = $r->[1];
+		    $fOrig = $r->[2];
+		    $self->Debug("Filtering entity %s for recipient %s via Filter %s", $eOrig, $r->[0], $fOrig);
+		    $eNew = $eOrig->dup();
+		    $@ = '';
+		    my($msg) = eval { $fOrig->doFilter({'entity' => $eNew,
+							'parser' => $parser,
+						        'main' => $self });
+				  };
+		    if ($@) {
+			$self->Fatal($@);
+		    }
+		    if (length($msg)) {
+			$self->Debug("Filter result: Entity $eNew, message $msg");
+			my($ePart) = MIME::Entity->build('Type' => 'text/plain',
+							 'Data' => [ $msg ]);
+			$self->Debug("Adding part: $ePart");
+			$self->Debug("Array of parts before adding: " . ($eNew->parts()));
+			$eNew->add_part($ePart, 0);
+			$self->Debug("Array of parts after adding: " . ($eNew->parts()));
+		    }
+		    $done = 0;
+		}
+		if ($r->[1] eq $eOrig  &&  $fOrig->IsEq($r->[2])) {
+		    $r->[1] = $eNew;
+		    splice(@$r, 2, 1);
+		    $self->Debug("Replacing entity %s for recipient %s with %s",
+				 $eOrig, $r->[0], $eNew);
+		    if (@$r == 2) {
+			# No more filters, send this mail
+			$self->Debug("Delivering entity %s for recipient %s",
+				     $eNew, $r->[0]);
+			push(@rList, $r->[0]);
+		    }
+		}
+	    }
+	}
+	if (@rList) {
+	    $self->Debug("Array of parts while delivering: " . ($eNew->parts()));
+	    $self->SendMimeMail($eNew, $sender, \@rList);
+	}
+    } until ($done);
+}
+
+
+############################################################################
+#
+#   Name:   new
+#
+#   Purpose: IspMailGate constructor; not yet clear for what this
+#            will be used, but it can be used (for example) to create
+#            a new thread.
+#
+#   Inputs:  $class - This class
+#            $attr - Constructor attributes
+#
+#   Returns: IspMailGate object or undef
+#
+############################################################################
+
+sub new ($$) {
+    my($class, $attr) = @_;
+    my($self) = $attr ? { %$attr } : {};
+    bless($self, (ref($class) || $class));
+    $self;
+}
+
+sub DESTROY ($) {
+    my($self) = @_;
+    if ($self->{'tmpDir'}) {
+	$self->Debug("Removing directory %s", $self->{'tmpDir'});
+	&File::Path::rmtree($self->{'tmpDir'});
+    }
+}
+
+1;
