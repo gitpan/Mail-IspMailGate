@@ -8,7 +8,7 @@ ifdef(`ISPMAILGATE_MAILER_ARGS',,
 ifdef(`ISPMAILGATE_MAILER_PATH',,
 	`define(`ISPMAILGATE_MAILER_PATH', /usr/bin/ispMailGateD)')
 ifdef(`ISPMAILGATE_MAILER_MAX',,
-	`define(`ISPMAILGATE_MAILER_MAX', 1000000)')
+	`define(`ISPMAILGATE_MAILER_MAX', 10000000)')
 POPDIVERT
 ####################################
 ###   ISPMAILGATE Mailer specification   ###

@@ -3,7 +3,7 @@ MANIFEST				This file
 MANIFEST.SKIP
 Makefile.PL				Makefile generator
 README					The programs installation and use
-lib/Bundle/IspMailGate.pm		A bundle for CPAN installation
+lib/Bundle/Mail/IspMailGate.pm		A bundle for CPAN installation
 lib/Mail/IspMailGate/Install.pm		Interactive configuration module
 lib/Mail/IspMailGate/Parser.pm		Our MIME::Parser subclass
 lib/Mail/IspMailGate/Filter.pm		Base filter class

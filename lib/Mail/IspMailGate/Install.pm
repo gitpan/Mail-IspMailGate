@@ -51,7 +51,7 @@ package Mail::IspMailGate::Install;
 
 use vars qw($VERSION @ISA @EXPORT $config);
 
-$VERSION = '1.1011';
+$VERSION = '1.1012';
 @ISA = qw(Exporter);
 @EXPORT = qw(Install);
 

@@ -13,7 +13,7 @@ use File::Path ();
 
 package Mail::IspMailGate;
 
-$Mail::IspMailGate::VERSION = '1.100';
+$Mail::IspMailGate::VERSION = '1.102';
 
 
 package Mail::IspMailGate::SMTP;
